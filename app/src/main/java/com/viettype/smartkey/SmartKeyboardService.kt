@@ -737,15 +737,26 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         }
     }
 
-    /** Màu tại 1 pha (0..1) của hiệu ứng - "Nhiều màu" quét cầu vồng đủ 360 độ hue; "1 màu" giữ
-     *  nguyên màu viền đang chọn, chỉ nhấp nháy độ sáng theo dạng sóng để tạo cảm giác đang "chạy". */
+    /** Màu tại 1 pha (0..1) của hiệu ứng - "Nhiều màu" quét cầu vồng đủ 360 độ hue (giữ nguyên
+     *  bảng màu gốc); "1 màu" dao động giữa phiên bản SÁNG HƠN và ĐẬM HƠN của màu đang chọn,
+     *  tạo cảm giác "thở" rõ rệt hơn so với chỉ nhấp nháy độ sáng đơn thuần. */
     private fun colorAtPhase(phase: Float, colorMode: LedEffectSettings.ColorMode, singleHsv: FloatArray): Int {
         return when (colorMode) {
-            LedEffectSettings.ColorMode.MULTI_COLOR -> Color.HSVToColor(floatArrayOf(phase * 360f, 0.85f, 1f))
+            LedEffectSettings.ColorMode.MULTI_COLOR ->
+                // Giữ nguyên bảng màu cầu vồng như cũ
+                Color.HSVToColor(floatArrayOf(phase * 360f, 0.85f, 1f))
             LedEffectSettings.ColorMode.SINGLE_COLOR -> {
-                val wave = ((kotlin.math.cos(phase * 2 * Math.PI) + 1) / 2).toFloat() // 0..1, đỉnh sáng nhất tại phase=0
-                val hsv = floatArrayOf(singleHsv[0], singleHsv[1], 0.3f + 0.7f * wave)
-                Color.HSVToColor(hsv)
+                // wave: 0..1 theo dạng sóng cos (đỉnh=1 tại phase=0, đáy=0 tại phase=0.5)
+                val wave = ((kotlin.math.cos(phase * 2 * Math.PI) + 1) / 2).toFloat()
+                // Dao động giữa màu ĐẬM (saturation cao, value thấp) và màu SÁNG (saturation thấp, value cao)
+                // để hiệu ứng "thở" nổi bật, không chỉ đơn giản là tối-sáng cùng tone.
+                val satLight = (singleHsv[1] * 0.35f).coerceIn(0f, 1f)  // màu nhạt/sáng: giảm bão hoà
+                val valLight = (singleHsv[2] * 1.0f).coerceAtMost(1f)    // sáng: giữ value ở max
+                val satDark  = (singleHsv[1] * 1.0f).coerceIn(0f, 1f)   // màu đậm: giữ bão hoà gốc
+                val valDark  = (singleHsv[2] * 0.35f).coerceIn(0.15f, 1f) // đậm: kéo value xuống
+                val sat = satDark + (satLight - satDark) * wave
+                val value = valDark + (valLight - valDark) * wave
+                Color.HSVToColor(floatArrayOf(singleHsv[0], sat, value))
             }
         }
     }
