@@ -30,7 +30,7 @@ object ThemeSettings {
         "Nâu" to 0xFF8D6E63.toInt(),
     )
 
-    private const val DEFAULT_COLOR = 0xFFF06292.toInt() // hồng - trùng mặc định trong ảnh mẫu
+    private const val DEFAULT_COLOR = 0xFFFAFAFA.toInt() // trắng - mặc định
 
     fun getAccentColor(context: Context): Int {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -42,10 +42,10 @@ object ThemeSettings {
             .putInt(KEY_ACCENT_COLOR, colorArgb).apply()
     }
 
-    /** true = nền Tối (mặc định), false = nền Sáng. Áp dụng cho toàn bộ nền bàn phím. */
+    /** true = nền Tối, false = nền Sáng (mặc định). Áp dụng cho toàn bộ nền bàn phím. */
     fun isDarkTheme(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_DARK_THEME, true)
+            .getBoolean(KEY_DARK_THEME, false)
     }
 
     fun setDarkTheme(context: Context, dark: Boolean) {
