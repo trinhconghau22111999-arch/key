@@ -55,6 +55,9 @@ class SettingsActivity : AppCompatActivity() {
         contentBox.addView(sectionTitle("Ngôn ngữ"))
         contentBox.addView(buildLanguageSection())
         contentBox.addView(spacer())
+        contentBox.addView(sectionTitle("Bố cục bàn phím"))
+        contentBox.addView(buildLayoutSection())
+        contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Màu chủ đạo"))
         contentBox.addView(buildColorSection())
         contentBox.addView(spacer())
@@ -125,10 +128,32 @@ class SettingsActivity : AppCompatActivity() {
         return box
     }
 
-    // ============================== MÀU CHỦ ĐẠO ==============================
+    // ============================== BỐ CỤC BÀN PHÍM ==============================
 
-    private fun buildColorSection(): View {
+    private fun buildLayoutSection(): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(TextView(this).apply {
+            text = "Luôn bật hàng phím số"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        row.addView(Switch(this).apply {
+            isChecked = NumberRowSettings.isEnabled(this@SettingsActivity)
+            setOnCheckedChangeListener { _, isChecked -> NumberRowSettings.setEnabled(this@SettingsActivity, isChecked) }
+        })
+        box.addView(row)
+        box.addView(bodyText("Hiện thêm 1 hàng số 0-9 ở trên cùng, dành cho trang gõ chữ đầu tiên."))
+        return box
+    }
+
+    // ============================== MÀU CHỦ ĐẠO ==============================
+    private fun buildColorSection(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            // Cho phép cuộn ngang vì giờ có 10 màu, không đủ chỗ hiển thị hết trên 1 hàng.
+        }
         val current = ThemeSettings.getAccentColor(this)
 
         for ((name, color) in ThemeSettings.PRESET_COLORS) {
@@ -137,7 +162,9 @@ class SettingsActivity : AppCompatActivity() {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
                     setColor(color)
-                    if (color == current) setStroke(6, Color.WHITE)
+                    // Viền mờ mặc định cho MỌI ô màu (kể cả khi chưa chọn) - không có viền
+                    // này thì màu Đen gần như biến mất vào nền tối #1A0F2E của app.
+                    if (color == current) setStroke(6, Color.WHITE) else setStroke(2, Color.parseColor("#55FFFFFF"))
                 }
                 contentDescription = name
                 setOnClickListener {
@@ -147,7 +174,8 @@ class SettingsActivity : AppCompatActivity() {
             }
             row.addView(swatch)
         }
-        return row
+        val scroll = android.widget.HorizontalScrollView(this).apply { addView(row) }
+        return scroll
     }
 
     // ============================== HIỆU ỨNG VIỀN SÁNG ==============================

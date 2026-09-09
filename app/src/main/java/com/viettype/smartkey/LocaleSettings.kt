@@ -27,16 +27,30 @@ object LocaleSettings {
     }
 
     fun setLocaleEnabled(context: Context, locale: KeyboardLocale, enabled: Boolean) {
-        val current = getEnabledLocales(context).map { it.code }.toMutableSet()
-        if (enabled) current.add(locale.code) else current.remove(locale.code)
-        if (current.isEmpty()) current.add(KeyboardLocale.VIETNAMESE.code) // luôn còn ít nhất 1 ngôn ngữ
-        prefs(context).edit().putStringSet(KEY_ENABLED_CODES, current).apply()
+        val updated = getEnabledLocales(context).map { it.code }.toMutableSet()
+        if (enabled) updated.add(locale.code) else updated.remove(locale.code)
+        if (updated.isEmpty()) updated.add(KeyboardLocale.VIETNAMESE.code) // luôn còn ít nhất 1 ngôn ngữ
+        prefs(context).edit().putStringSet(KEY_ENABLED_CODES, updated).apply()
+
+        // Nếu ngôn ngữ ĐANG GÕ vừa bị tắt (không còn trong danh sách bật) - vd chỉ còn
+        // đúng 1 ngôn ngữ được bật - phải TỰ CHUYỂN bàn phím sang ngôn ngữ còn lại đang
+        // bật ngay, tránh bị "khoá cứng" vào ngôn ngữ vừa tắt (bug cũ: getCurrentLocale
+        // không kiểm tra ngôn ngữ hiện tại có còn nằm trong danh sách bật hay không).
+        val currentCode = prefs(context).getString(KEY_CURRENT_CODE, null)
+        if (currentCode != null && !updated.contains(currentCode)) {
+            val fallback = KeyboardLocale.entries.firstOrNull { updated.contains(it.code) }
+                ?: KeyboardLocale.VIETNAMESE
+            setCurrentLocale(context, fallback)
+        }
     }
 
     fun getCurrentLocale(context: Context): KeyboardLocale {
+        val enabled = getEnabledLocales(context)
         val code = prefs(context).getString(KEY_CURRENT_CODE, KeyboardLocale.VIETNAMESE.code)
-        return KeyboardLocale.entries.find { it.code == code }
-            ?: getEnabledLocales(context).first()
+        val match = KeyboardLocale.entries.find { it.code == code }
+        // Chỉ chấp nhận ngôn ngữ đã lưu nếu nó vẫn còn đang được BẬT - nếu không (vd người
+        // dùng vừa tắt ngôn ngữ đang gõ), tự rơi về ngôn ngữ (duy nhất) đang bật.
+        return if (match != null && enabled.contains(match)) match else enabled.first()
     }
 
     fun setCurrentLocale(context: Context, locale: KeyboardLocale) {

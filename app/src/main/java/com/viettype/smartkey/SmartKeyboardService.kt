@@ -187,6 +187,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         listOf("ABC", "COMMA", "SPACE", "PERIOD", "ENTER"),
     )
 
+    /** Hàng số 1-0 dùng cho tuỳ chọn "Luôn bật hàng phím số" ở trang gõ chữ. */
+    private val numberRow = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
+
     /** Ký tự có dấu phụ khi GIỮ LÂU (nhấn giữ) 1 phím chữ cái - dùng cho các ký tự
      *  không có sẵn trên bàn phím Telex thường (ürl, ç...) và số hay dùng kèm ký tự đặc biệt. */
     private val longPressVariants = mapOf(
@@ -196,7 +199,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private fun rebuildKeyRows() {
         rowsHost.removeAllViews()
-        val rows = if (currentPage == Page.LETTERS) lettersRows else symbolsRows
+        val rows = mutableListOf<List<String>>()
+        // "Luôn bật hàng phím số" - chỉ áp dụng cho trang gõ chữ đầu tiên (LETTERS),
+        // trang SYMBOLS vốn đã có sẵn hàng số riêng ở trên cùng rồi.
+        if (currentPage == Page.LETTERS && NumberRowSettings.isEnabled(this)) {
+            rows.add(numberRow)
+        }
+        rows.addAll(if (currentPage == Page.LETTERS) lettersRows else symbolsRows)
         letterKeyViews.clear()
         for (rowKeys in rows) {
             val rowView = LinearLayout(this).apply {
@@ -221,7 +230,14 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         val keyView = TextView(this).apply {
             text = label
             gravity = Gravity.CENTER
-            textSize = if (code.length == 1) 18f else 13f
+            // Enter/Shift/Backspace hiển thị bằng 1 icon chữ Unicode - trước đây tính cỡ
+            // chữ theo ĐỘ DÀI MÃ PHÍM ("ENTER" dài 5 ký tự) nên bị xếp vào nhóm chữ nhỏ dù
+            // NHÃN hiển thị chỉ có 1 ký tự icon, khiến icon trông rất bé. Giờ tính theo
+            // đúng phím icon để phóng to hẳn cho dễ nhìn.
+            textSize = when (code) {
+                "ENTER", "SHIFT", "BACKSPACE" -> 22f
+                else -> if (code.length == 1) 18f else 13f
+            }
             setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight)
                 .also { it.setMargins(dp(2), dp(2), dp(2), dp(2)) }

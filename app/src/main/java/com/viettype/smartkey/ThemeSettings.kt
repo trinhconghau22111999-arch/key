@@ -12,15 +12,19 @@ object ThemeSettings {
     private const val PREFS_NAME = "theme_settings"
     private const val KEY_ACCENT_COLOR = "accent_color_argb"
 
-    /** Bảng màu dựng sẵn cho người dùng chọn - mỗi màu là 1 cặp (tên hiển thị, mã ARGB). */
+    /** Bảng màu dựng sẵn cho người dùng chọn - mỗi màu là 1 cặp (tên hiển thị, mã ARGB).
+     *  Thứ tự: đỏ, xanh dương, xanh lá, vàng, hồng, đen, trắng, cam, tím, nâu. */
     val PRESET_COLORS: List<Pair<String, Int>> = listOf(
-        "Tím" to 0xFFB388FF.toInt(),
+        "Đỏ" to 0xFFE57373.toInt(),
         "Xanh dương" to 0xFF64B5F6.toInt(),
         "Xanh lá" to 0xFF81C784.toInt(),
-        "Vàng cam" to 0xFFFFB74D.toInt(),
+        "Vàng" to 0xFFFFD54F.toInt(),
         "Hồng" to 0xFFF06292.toInt(),
-        "Đỏ" to 0xFFE57373.toInt(),
-        "Trắng xám" to 0xFFE0E0E0.toInt(),
+        "Đen" to 0xFF212121.toInt(),
+        "Trắng" to 0xFFFAFAFA.toInt(),
+        "Cam" to 0xFFFFB74D.toInt(),
+        "Tím" to 0xFFB388FF.toInt(),
+        "Nâu" to 0xFF8D6E63.toInt(),
     )
 
     private const val DEFAULT_COLOR = 0xFFB388FF.toInt()
