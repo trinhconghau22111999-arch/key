@@ -151,7 +151,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
-        closeScanOverlay()
+        // KHÔNG tự đóng khung quét QR ở đây nữa: onFinishInputView() còn bị gọi cả những lúc
+        // con trỏ chỉ RỜI Ô NHẬP TRONG CHỐC LÁT (ví dụ quét mã xong bấm Enter) chứ không hẳn là
+        // người dùng muốn thoát quét - trước đây khiến khung quét tự ẩn ngoài ý muốn. Giờ khung
+        // quét QR đứng yên cho tới khi người dùng tự bấm "Huỷ" (xem closeScanOverlay()).
         closeMicOverlay()
     }
 
@@ -161,6 +164,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         ledAnimator?.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
+        // Bàn phím có thể bị hệ thống huỷ hẳn (onDestroy) trong lúc khung quét QR vẫn đang mở
+        // (giờ không còn tự đóng theo onFinishInputView nữa) - phải tự giải phóng camera ở đây,
+        // nếu không sẽ rò rỉ camera/đèn flash vẫn bật ngầm dù bàn phím đã biến mất.
+        if (scanOverlay != null) closeScanOverlay()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
