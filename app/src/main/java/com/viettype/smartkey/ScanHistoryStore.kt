@@ -8,9 +8,7 @@ import java.util.Calendar
 import java.util.Locale
 
 /**
- * Lưu lại danh sách các mã QR/vạch đã quét được (nội dung + thời điểm), và đếm
- * số lần quét trong NGÀY HIỆN TẠI để áp giới hạn miễn phí/ngày (tự reset về 0
- * khi sang ngày mới, không cần người dùng làm gì).
+ * Lưu lại danh sách các mã QR/vạch đã quét được (nội dung + thời điểm).
  */
 object ScanHistoryStore {
 
@@ -18,12 +16,8 @@ object ScanHistoryStore {
 
     private const val PREFS_NAME = "scan_history"
     private const val KEY_ENTRIES_JSON = "entries_json"
-    private const val KEY_COUNT_DATE = "count_date"
-    private const val KEY_COUNT_TODAY = "count_today"
-    private const val KEY_DAILY_LIMIT = "daily_limit"
     private const val KEY_DUPLICATE_LIMIT = "duplicate_limit"
 
-    private const val DEFAULT_DAILY_LIMIT = 20
     private const val MAX_STORED_ENTRIES = 500
 
     /** Số lần TỐI ĐA cho phép xuất liên tiếp CÙNG 1 nội dung mã trong 1 lượt quét
@@ -49,7 +43,6 @@ object ScanHistoryStore {
         list.add(0, ScanEntry(content, System.currentTimeMillis()))
         while (list.size > MAX_STORED_ENTRIES) list.removeAt(list.lastIndex)
         prefs.edit().putString(KEY_ENTRIES_JSON, serialize(list)).apply()
-        incrementTodayCount(context)
     }
 
     fun getEntries(context: Context): List<ScanEntry> {
@@ -59,36 +52,6 @@ object ScanHistoryStore {
 
     fun clearEntries(context: Context) {
         prefs(context).edit().remove(KEY_ENTRIES_JSON).apply()
-    }
-
-    fun getDailyLimit(context: Context): Int = prefs(context).getInt(KEY_DAILY_LIMIT, DEFAULT_DAILY_LIMIT)
-
-    fun setDailyLimit(context: Context, limit: Int) {
-        prefs(context).edit().putInt(KEY_DAILY_LIMIT, limit.coerceAtLeast(0)).apply()
-    }
-
-    /** Đã quét bao nhiêu lần TRONG HÔM NAY - tự trả về 0 nếu ngày đã đổi so với lần quét gần nhất. */
-    fun getTodayCount(context: Context): Int {
-        val prefs = prefs(context)
-        val today = dayFormat.format(System.currentTimeMillis())
-        val savedDate = prefs.getString(KEY_COUNT_DATE, null)
-        return if (savedDate == today) prefs.getInt(KEY_COUNT_TODAY, 0) else 0
-    }
-
-    fun canScanMore(context: Context): Boolean {
-        val limit = getDailyLimit(context)
-        if (limit <= 0) return true // 0 = không giới hạn
-        return getTodayCount(context) < limit
-    }
-
-    private fun incrementTodayCount(context: Context) {
-        val prefs = prefs(context)
-        val today = dayFormat.format(System.currentTimeMillis())
-        val currentCount = getTodayCount(context) // đã tự xử lý logic sang-ngày-mới
-        prefs.edit()
-            .putString(KEY_COUNT_DATE, today)
-            .putInt(KEY_COUNT_TODAY, currentCount + 1)
-            .apply()
     }
 
     fun formatTimestamp(timestampMs: Long): String {

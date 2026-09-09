@@ -67,9 +67,6 @@ class SettingsActivity : AppCompatActivity() {
         contentBox.addView(sectionTitle("Rung khi gõ"))
         contentBox.addView(buildVibrationSection())
         contentBox.addView(spacer())
-        contentBox.addView(sectionTitle("Giới hạn quét mã / ngày"))
-        contentBox.addView(buildScanLimitSection())
-        contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Giới hạn quét trùng lặp"))
         contentBox.addView(buildDuplicateScanLimitSection())
         contentBox.addView(spacer())
@@ -187,9 +184,14 @@ class SettingsActivity : AppCompatActivity() {
         box.addView(scroll)
 
         // Giao diện sáng/tối - đổi toàn bộ nền khối bàn phím + màu nền từng phím.
+        // Nút tự đổi màu NỀN của chính nó theo lựa chọn hiện tại (trắng khi đang ở chế độ
+        // Sáng, tím than khi đang ở chế độ Tối) để người dùng thấy rõ hiệu ứng ngay tại đây,
+        // không cần bấm xong mới biết đã đổi đúng ý chưa.
         val isDark = ThemeSettings.isDarkTheme(this)
         box.addView(pillSwitchButton(
-            if (isDark) "🌙  Đang dùng nền Tối" else "☀️  Đang dùng nền Sáng"
+            label = if (isDark) "🌙  Đang dùng nền Tối" else "☀️  Đang dùng nền Sáng",
+            bgColor = if (isDark) Color.parseColor("#1A0F2E") else Color.WHITE,
+            textColor = if (isDark) Color.WHITE else Color.parseColor("#1A0F2E")
         ) {
             ThemeSettings.setDarkTheme(this@SettingsActivity, !isDark)
             rebuildAll()
@@ -198,10 +200,16 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     /** Nút bo tròn có viền nổi bật màu chủ đạo, bấm vào là chuyển sang trạng thái khác ngay
-     *  (dùng cho công tắc sáng/tối - không cần icon check riêng vì nhãn đã tự nói rõ trạng thái). */
-    private fun pillSwitchButton(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
+     *  (dùng cho công tắc sáng/tối - không cần icon check riêng vì nhãn đã tự nói rõ trạng thái,
+     *  và nền/chữ của chính nút cũng đổi theo để phản ánh đúng lựa chọn Sáng/Tối hiện tại). */
+    private fun pillSwitchButton(
+        label: String,
+        bgColor: Int = Color.parseColor("#1A0F2E"),
+        textColor: Int = Color.WHITE,
+        onClick: () -> Unit
+    ): TextView = TextView(this).apply {
         text = label
-        setTextColor(Color.WHITE)
+        setTextColor(textColor)
         textSize = 15f
         gravity = Gravity.CENTER
         setPadding(24, 28, 24, 28)
@@ -210,7 +218,7 @@ class SettingsActivity : AppCompatActivity() {
         ).also { it.setMargins(0, 8, 0, 0) }
         background = GradientDrawable().apply {
             cornerRadius = 28f
-            setColor(Color.parseColor("#1A0F2E"))
+            setColor(bgColor)
             setStroke(4, ThemeSettings.getAccentColor(this@SettingsActivity))
         }
         setOnClickListener { onClick() }
@@ -407,28 +415,6 @@ class SettingsActivity : AppCompatActivity() {
             setColor(Color.parseColor("#2A1F4A"))
         }
         setOnClickListener { onClick() }
-    }
-
-    // ============================== GIỚI HẠN QUÉT ==============================
-
-    private fun buildScanLimitSection(): View {
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val used = ScanHistoryStore.getTodayCount(this)
-        val limit = ScanHistoryStore.getDailyLimit(this)
-        box.addView(bodyText(
-            if (limit <= 0) "Không giới hạn - đã quét $used lần hôm nay."
-            else "Đã dùng $used / $limit lần hôm nay."
-        ))
-
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for (presetLimit in listOf(10, 20, 50, 0)) {
-            row.addView(chip(if (presetLimit == 0) "Không giới hạn" else "$presetLimit/ngày", presetLimit == limit) {
-                ScanHistoryStore.setDailyLimit(this, presetLimit)
-                rebuildAll()
-            })
-        }
-        box.addView(row)
-        return box
     }
 
     // ============================== LỊCH SỬ QUÉT ==============================

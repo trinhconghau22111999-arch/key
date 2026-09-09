@@ -221,8 +221,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private val symbolsRows = listOf(
         listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
-        listOf("@", "#", "đ", "_", "&", "-", "+", "(", ")"),
-        listOf("*", "PAGE3", "\"", "'", ":", ";", "!", "?", "BACKSPACE"),
+        // Thêm "/" ngay bên phải ")" - hàng này giờ đủ 10 cột, thẳng hàng với hàng số ở trên.
+        listOf("@", "#", "đ", "_", "&", "-", "+", "(", ")", "/"),
+        // Đổi chỗ "*" và "=\<" (PAGE3) cho nhau theo đúng vị trí người dùng đã đánh dấu.
+        listOf("PAGE3", "*", "\"", "'", ":", ";", "!", "?", "BACKSPACE"),
         listOf("ABC", "LT", "SPACE", "GT", "ENTER"),
     )
 
@@ -285,9 +287,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         }
         refreshLetterCaseDisplay()
     }
-
     /** Trang bàn phím số (123): cột số bên trái (1-9 + hàng toán tử) chiếm 3 phần bề rộng,
-     *  cột phải 1 phần gồm Xoá / ABC / Enter - riêng Enter cao gấp đôi, chiếm luôn 2 hàng
+     *  cột phải 1 phần gồm ABC / Xoá / Enter - riêng Enter cao gấp đôi, chiếm luôn 2 hàng
      *  dưới cùng, giống bàn phím số máy tính trong ảnh mẫu. */
     private fun buildNumpadBody(): View {
         val body = LinearLayout(this).apply {
@@ -332,8 +333,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
         }
-        rightColumn.addView(asVerticalWeighted(buildKey("BACKSPACE", normX = 1f, normY = 0f), 1f))
-        rightColumn.addView(asVerticalWeighted(buildKey("ABC", normX = 1f, normY = 0.5f), 1f))
+        // Đổi chỗ Xoá và ABC theo yêu cầu - ABC giờ ở trên, Xoá ở giữa.
+        rightColumn.addView(asVerticalWeighted(buildKey("ABC", normX = 1f, normY = 0f), 1f))
+        rightColumn.addView(asVerticalWeighted(buildKey("BACKSPACE", normX = 1f, normY = 0.5f), 1f))
         rightColumn.addView(asVerticalWeighted(buildKey("ENTER", normX = 1f, normY = 1f), 2f))
 
         body.addView(numberColumn)
@@ -371,9 +373,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             // chữ theo ĐỘ DÀI MÃ PHÍM ("ENTER" dài 5 ký tự) nên bị xếp vào nhóm chữ nhỏ dù
             // NHÃN hiển thị chỉ có 1 ký tự icon, khiến icon trông rất bé. Giờ tính theo
             // đúng phím icon để phóng to hẳn cho dễ nhìn.
-            textSize = when (code) {
-                "ENTER", "SHIFT", "BACKSPACE" -> 22f
-                else -> if (code.length == 1) 18f else 13f
+            textSize = when {
+                // Icon nút Xoá ở trang 1 (chữ) và trang 2 (ký hiệu) thu nhỏ còn ~80% (22 -> 17.6)
+                // theo yêu cầu - riêng trang 3 và trang bàn phím số giữ nguyên cỡ cũ.
+                code == "BACKSPACE" && (currentPage == Page.LETTERS || currentPage == Page.SYMBOLS) -> 17.6f
+                code == "ENTER" || code == "SHIFT" || code == "BACKSPACE" -> 22f
+                code.length == 1 -> 18f
+                else -> 13f
             }
             setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight)
@@ -381,9 +387,12 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             background = keyBackground
         }
 
-        if (code.length == 1 && code[0].isLetter() && currentPage != Page.SYMBOLS2) {
+        if (code.length == 1 && code[0].isLetter() && currentPage != Page.SYMBOLS2 && code != "đ") {
             // Trang 3 dùng vài ký tự Hy Lạp/toán học (π, Δ...) mà Kotlin cũng coi là "letter" -
             // không đưa vào letterKeyViews để tránh bị hoa/thường hoá nhầm theo trạng thái Shift.
+            // Phím "đ" ở trang Symbols là phím TẮT chèn nhanh ký tự này, không phải phím trong
+            // bộ chữ cái đang gõ - phải luôn cố định "đ" thường, không tự hoá "Đ" theo Shift/hoa
+            // đầu câu (trước đây bị đưa vào đây nên thỉnh thoảng tự đổi thành "Đ" rất khó hiểu).
             letterKeyViews.add(keyView to code[0])
         }
         if (code == "SHIFT") {
@@ -406,7 +415,12 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         "PAGE3" -> "=\\<"
         "SYM" -> "?123"
         "ABC" -> "ABC"
-        else -> if (code.length == 1 && capsMode != CapsMode.OFF) code.uppercase() else code
+        // CHỈ trang chữ cái (LETTERS) mới có khái niệm hoa/thường - các ký hiệu/số ở trang
+        // Symbols và Symbols2 (π, đ, Δ, √...) phải luôn hiển thị ĐÚNG NHÃN GỐC, không tự
+        // in hoa theo capsMode. Trước đây thiếu điều kiện currentPage nên mỗi khi bàn phím
+        // mở lên sẵn đang ở trang Symbols/Symbols2 lúc auto-cap đầu câu đang bật, các phím
+        // 1 ký tự này (đ -> Đ, π -> Π trông vuông vuông như chữ Π hoa...) bị in hoa nhầm.
+        else -> if (currentPage == Page.LETTERS && code.length == 1 && capsMode != CapsMode.OFF) code.uppercase() else code
     }
 
     /** Gắn xử lý chạm cho 1 phím: bấm nhanh -> gõ ngay; giữ lâu -> hiện popup ký tự phụ (nếu
@@ -424,6 +438,11 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 MotionEvent.ACTION_DOWN -> {
                     longPressTriggered = false
                     v.alpha = 0.6f
+                    // Rung phản hồi NGAY LÚC NGÓN TAY CHẠM XUỐNG, không đợi ký tự thật sự
+                    // được chèn vào ô nhập (trước đây rung ở cuối, sau khi xử lý Telex/commit
+                    // xong nên cảm giác "rung trễ" dù chỉ vài chục mili-giây). Trừ BACKSPACE vì
+                    // phím này tự rung theo từng lần xoá khi giữ tay lặp lại (xem handleBackspace()).
+                    if (code != "BACKSPACE") VibrationSettings.tick(this@SmartKeyboardService)
                     if (code == "BACKSPACE") {
                         repeatRunnable = object : Runnable {
                             override fun run() {
@@ -571,11 +590,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         val ic = currentInputConnection ?: return
         val locale = LocaleSettings.getCurrentLocale(this)
         // Trang 3 (ký hiệu toán học/Hy Lạp) không áp dụng hoa/thường - π, Δ... phải gõ ra
-        // đúng như hiển thị dù Shift/Caps Lock đang bật từ trang chữ trước đó.
-        val isUpper = capsMode != CapsMode.OFF && currentPage != Page.SYMBOLS2
-        val typedChar = if (rawChar.isLetter() && currentPage != Page.SYMBOLS2) {
+        // đúng như hiển thị dù Shift/Caps Lock đang bật từ trang chữ trước đó. Phím tắt "đ" ở
+        // trang Symbols cũng vậy - luôn chèn "đ" thường cố định, không tự hoá theo Shift/hoa
+        // đầu câu (nó là phím chèn nhanh, không phải phím thuộc bộ chữ cái đang gõ).
+        val isUpper = capsMode != CapsMode.OFF && currentPage != Page.SYMBOLS2 && rawChar != 'đ'
+        val typedChar = if (rawChar.isLetter() && currentPage != Page.SYMBOLS2 && rawChar != 'đ') {
             if (isUpper) rawChar.uppercaseChar() else rawChar
-        } else rawChar // số/ký tự đặc biệt không có khái niệm hoa/thường
+        } else rawChar // số/ký tự đặc biệt (và phím tắt "đ") không có khái niệm hoa/thường
 
         if (rawChar.isLetter() && locale.usesTelex && currentPage != Page.SYMBOLS2) {
             val wordBefore = getCurrentWordBuffer()
@@ -597,34 +618,42 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         if (symbol == "." || symbol == "!" || symbol == "?") {
             autoCapPending = true
         }
-        VibrationSettings.tick(this)
+        // Rung đã xử lý ngay lúc chạm xuống (ACTION_DOWN) - xem attachKeyTouchHandling().
     }
 
     private fun afterCharacterCommitted(isLetter: Boolean) {
+        // QUAN TRỌNG: phải tắt autoCapPending TRƯỚC khi gọi refreshLetterCaseDisplay().
+        // Lỗi cũ: tắt capsMode xong mới gọi refreshLetterCaseDisplay() trong khi
+        // autoCapPending vẫn còn true -> hàm đó thấy "autoCapPending && capsMode==OFF"
+        // nên tự BẬT LẠI SINGLE_SHIFT ngay lập tức, khiến CHỮ THỨ 2 cũng bị hoa theo
+        // (luôn in hoa 2 chữ cái đầu thay vì đúng 1 chữ theo ý muốn).
+        if (isLetter) autoCapPending = false
         if (capsMode == CapsMode.SINGLE_SHIFT) {
             capsMode = CapsMode.OFF
             refreshLetterCaseDisplay()
         }
-        if (isLetter) autoCapPending = false
-        VibrationSettings.tick(this)
+        // Rung đã xử lý ngay lúc chạm xuống (ACTION_DOWN) - xem attachKeyTouchHandling().
     }
 
     private fun handleBackspace() {
         val ic = currentInputConnection ?: return
         ic.deleteSurroundingText(1, 0)
+        // BACKSPACE vẫn tự rung ở đây (không rung ở ACTION_DOWN) vì hàm này còn được gọi lặp
+        // lại liên tục lúc giữ tay để xoá nhanh - mỗi lần xoá cần rung riêng để phản hồi đúng
+        // từng ký tự đã mất, không chỉ 1 cái rung duy nhất lúc vừa chạm xuống.
         VibrationSettings.tick(this)
     }
 
     private fun handleSpace() {
         currentInputConnection?.commitText(" ", 1)
-        VibrationSettings.tick(this)
+        // Rung đã xử lý ngay lúc chạm xuống (ACTION_DOWN) - xem attachKeyTouchHandling().
     }
 
     private fun handleEnter() {
         currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
         currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
         autoCapPending = true
-        VibrationSettings.tick(this)
+        // Rung đã xử lý ngay lúc chạm xuống (ACTION_DOWN) - xem attachKeyTouchHandling().
     }
 
     private fun handleShiftTap() {
@@ -666,9 +695,12 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         ledAnimator?.cancel()
 
         if (!LedEffectSettings.isEnabled(this)) {
-            // Tắt hẳn - trả viền mọi phím + dải đèn trên cùng về trong suốt.
+            // Hiệu ứng "chạy" đang TẮT - dải đèn trên cùng tắt hẳn, nhưng viền phím vẫn phải
+            // hiển thị TĨNH đúng màu đang chọn ở mục "Màu sắc" (trước đây bị set trong suốt ở
+            // đây nên đổi màu trong Cài đặt không thấy tác dụng gì trên bàn phím thật).
             ledStripView.setBackgroundColor(Color.TRANSPARENT)
-            for (slot in ledKeySlots) slot.drawable.setStroke(0, Color.TRANSPARENT)
+            val staticColor = ThemeSettings.getAccentColor(this)
+            for (slot in ledKeySlots) slot.drawable.setStroke(ledBorderWidthPx, staticColor)
             return
         }
 
@@ -721,10 +753,6 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     // ============================== QUÉT MÃ QR / VẠCH ==============================
 
     private fun onScanButtonPressed() {
-        if (!ScanHistoryStore.canScanMore(this)) {
-            showToast("Đã đạt giới hạn quét hôm nay.")
-            return
-        }
         if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             startActivity(Intent(this, CameraPermissionRelay::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -851,12 +879,6 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 showToast("Đã đạt giới hạn quét lặp ($duplicateLimit lần) cho mã này. Quét mã khác để tiếp tục.")
                 duplicateLimitToastShown = true
             }
-            return
-        }
-
-        if (!ScanHistoryStore.canScanMore(this)) {
-            showToast("Đã đạt giới hạn quét hôm nay.")
-            closeScanOverlay()
             return
         }
 
