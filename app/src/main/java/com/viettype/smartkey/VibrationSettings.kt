@@ -34,16 +34,24 @@ object VibrationSettings {
             .putInt(KEY_STRENGTH_PERCENT, percent.coerceIn(0, 100)).apply()
     }
 
-    /** Rung 1 cái ngắn cho phản hồi gõ phím - tự bỏ qua nếu người dùng đã tắt rung. */
+    /** Rung 1 cái ngắn cho phản hồi gõ phím - tự bỏ qua nếu người dùng đã tắt rung.
+     *
+     *  Độ mạnh rung phụ thuộc 2 yếu tố: BIÊN ĐỘ (amplitude, motor rung mạnh/nhẹ) và
+     *  THỜI LƯỢNG (duration, rung lâu hay mau tắt) - ở mức 100% trước đây chỉ kéo dài
+     *  28ms nên nhiều máy cảm giác rung "chưa đã tay"; giờ kéo dài tới 60ms ở mức tối
+     *  đa để cảm nhận rõ ràng hơn, đồng thời biên độ đạt tối đa (255, giới hạn phần
+     *  cứng Android) sớm hơn 1 chút để các mức cao đều đã cảm nhận rõ. */
     fun tick(context: Context) {
         if (!isEnabled(context)) return
         val strength = getStrengthPercent(context)
         if (strength <= 0) return
-        val durationMs = 8L + (strength * 0.2).toLong() // 8ms..28ms tuỳ độ mạnh
+        val durationMs = 10L + (strength * 0.5).toLong() // 10ms (1%) .. 60ms (100%)
         val vibrator = obtainVibrator(context) ?: return
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val amplitude = (255 * strength / 100).coerceIn(1, 255)
+                // Biên độ tối thiểu 40 (để mức thấp vẫn cảm nhận được) và đạt kịch trần
+                // 255 ngay từ khoảng 80% trở lên, thay vì phải kéo hết cỡ 100% mới full.
+                val amplitude = (40 + (215 * strength / 80)).coerceIn(1, 255)
                 vibrator.vibrate(VibrationEffect.createOneShot(durationMs, amplitude))
             } else {
                 @Suppress("DEPRECATION")

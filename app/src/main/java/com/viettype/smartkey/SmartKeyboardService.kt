@@ -68,6 +68,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private var cameraProvider: ProcessCameraProvider? = null
     private var lastQrHandledAt = 0L
 
+    // Quét LIÊN TỤC: không tự đóng khung quét sau khi đọc được 1 mã, cho phép quét
+    // nhiều mã kế tiếp nhau trong cùng 1 lượt mở camera. Theo dõi mã lặp lại để áp
+    // "Giới hạn quét trùng lặp" - quét mã KHÁC thì đếm lại từ đầu (xem ScanHistoryStore).
+    private var lastScannedContent: String? = null
+    private var duplicateStreak = 0
+    private var duplicateLimitToastShown = false
+
     private var speechRecognizer: SpeechRecognizer? = null
     private var micOverlay: View? = null
 
@@ -612,13 +619,40 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private fun handleBarcodeResults(barcodes: List<Barcode>) {
         val now = System.currentTimeMillis()
-        if (now - lastQrHandledAt < 1500) return // chống đọc trùng nhiều khung hình liên tiếp của CÙNG 1 mã
+        if (now - lastQrHandledAt < 1500) return // chống đọc trùng nhiều khung hình liên tiếp của CÙNG 1 lượt giữ mã trước camera
         val content = barcodes.firstOrNull()?.rawValue ?: return
         lastQrHandledAt = now
+
+        if (content == lastScannedContent) {
+            duplicateStreak++
+        } else {
+            // Mã KHÁC với lần trước -> đếm lại từ đầu.
+            lastScannedContent = content
+            duplicateStreak = 1
+            duplicateLimitToastShown = false
+        }
+
+        val duplicateLimit = ScanHistoryStore.getDuplicateLimit(this)
+        if (duplicateStreak > duplicateLimit) {
+            // Đã đạt giới hạn lặp cho ĐÚNG mã này - ngừng xuất thêm, chỉ báo 1 lần
+            // (không báo liên tục mỗi khung hình) cho tới khi người dùng đưa mã KHÁC vào.
+            if (!duplicateLimitToastShown) {
+                showToast("Đã đạt giới hạn quét lặp ($duplicateLimit lần) cho mã này. Quét mã khác để tiếp tục.")
+                duplicateLimitToastShown = true
+            }
+            return
+        }
+
+        if (!ScanHistoryStore.canScanMore(this)) {
+            showToast("Đã đạt giới hạn quét hôm nay.")
+            closeScanOverlay()
+            return
+        }
+
         currentInputConnection?.commitText(content, 1)
         ScanHistoryStore.addEntry(this, content)
         VibrationSettings.tick(this)
-        closeScanOverlay()
+        // KHÔNG đóng khung quét ở đây - quét liên tục, người dùng tự bấm "Huỷ" khi xong.
     }
 
     private fun closeScanOverlay() {
@@ -629,6 +663,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         } catch (ignored: Exception) {
         }
         keyboardBody.visibility = View.VISIBLE
+        lastScannedContent = null
+        duplicateStreak = 0
+        duplicateLimitToastShown = false
     }
 
     // ============================== NHẬP LIỆU BẰNG GIỌNG NÓI ==============================

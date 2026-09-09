@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -65,6 +66,9 @@ class SettingsActivity : AppCompatActivity() {
         contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Giới hạn quét mã / ngày"))
         contentBox.addView(buildScanLimitSection())
+        contentBox.addView(spacer())
+        contentBox.addView(sectionTitle("Giới hạn quét trùng lặp"))
+        contentBox.addView(buildDuplicateScanLimitSection())
         contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Lịch sử quét"))
         contentBox.addView(buildHistorySection())
@@ -199,21 +203,91 @@ class SettingsActivity : AppCompatActivity() {
         })
         box.addView(switchRow)
 
-        box.addView(bodyText("Độ mạnh"))
+        box.addView(bodyText("Kéo thanh để tự chỉnh độ rung khi gõ - kéo về 0% để tắt hẳn rung."))
+
+        val valueLabel = bodyText("${VibrationSettings.getStrengthPercent(this@SettingsActivity)}%").apply {
+            setTextColor(Color.WHITE)
+            textSize = 20f
+        }
+        box.addView(valueLabel)
+
+        // Rung NGAY trong lúc kéo (không đợi buông tay) để cảm nhận độ mạnh đang chọn,
+        // nhưng giới hạn tần suất (>= 60ms/lần) để tránh rung dồn dập gây khó chịu.
+        var lastDragTickAt = 0L
         box.addView(SeekBar(this).apply {
             max = 100
             progress = VibrationSettings.getStrengthPercent(this@SettingsActivity)
+            progressTintList = android.content.res.ColorStateList.valueOf(ThemeSettings.getAccentColor(this@SettingsActivity))
+            thumbTintList = android.content.res.ColorStateList.valueOf(ThemeSettings.getAccentColor(this@SettingsActivity))
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    if (fromUser) VibrationSettings.setStrengthPercent(this@SettingsActivity, progress)
+                    if (!fromUser) return
+                    VibrationSettings.setStrengthPercent(this@SettingsActivity, progress)
+                    valueLabel.text = "$progress%"
+                    val now = System.currentTimeMillis()
+                    if (now - lastDragTickAt >= 60) {
+                        lastDragTickAt = now
+                        VibrationSettings.tick(this@SettingsActivity)
+                    }
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                    VibrationSettings.tick(this@SettingsActivity) // rung thử để cảm nhận ngay
+                    VibrationSettings.tick(this@SettingsActivity) // rung thử lần cuối để chốt cảm nhận
                 }
             })
         })
         return box
+    }
+
+    // ============================== GIỚI HẠN QUÉT TRÙNG LẶP ==============================
+
+    private fun buildDuplicateScanLimitSection(): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(bodyText(
+            "Khi quét liên tục cùng 1 mã QR/mã vạch nhiều lần liền nhau, chỉ xuất dữ liệu " +
+                "tối đa số lần đặt dưới đây rồi tự dừng (quét mã KHÁC thì đếm lại từ đầu)."
+        ))
+
+        val countLabel = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 22f
+            gravity = Gravity.CENTER
+            text = ScanHistoryStore.getDuplicateLimit(this@SettingsActivity).toString()
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 16, 0, 0)
+        }
+        row.addView(stepperButton("−") {
+            val newValue = ScanHistoryStore.getDuplicateLimit(this) - 1
+            ScanHistoryStore.setDuplicateLimit(this, newValue)
+            countLabel.text = ScanHistoryStore.getDuplicateLimit(this).toString()
+        })
+        row.addView(countLabel)
+        row.addView(stepperButton("+") {
+            val newValue = ScanHistoryStore.getDuplicateLimit(this) + 1
+            ScanHistoryStore.setDuplicateLimit(this, newValue)
+            countLabel.text = ScanHistoryStore.getDuplicateLimit(this).toString()
+        })
+        box.addView(row)
+        return box
+    }
+
+    private fun stepperButton(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = label
+        setTextColor(Color.WHITE)
+        textSize = 20f
+        gravity = Gravity.CENTER
+        layoutParams = LinearLayout.LayoutParams(140, 140).also { it.setMargins(16, 0, 16, 0) }
+        background = GradientDrawable().apply {
+            cornerRadius = 20f
+            setStroke(4, ThemeSettings.getAccentColor(this@SettingsActivity))
+            setColor(Color.parseColor("#2A1F4A"))
+        }
+        setOnClickListener { onClick() }
     }
 
     // ============================== GIỚI HẠN QUÉT ==============================

@@ -21,9 +21,25 @@ object ScanHistoryStore {
     private const val KEY_COUNT_DATE = "count_date"
     private const val KEY_COUNT_TODAY = "count_today"
     private const val KEY_DAILY_LIMIT = "daily_limit"
+    private const val KEY_DUPLICATE_LIMIT = "duplicate_limit"
 
     private const val DEFAULT_DAILY_LIMIT = 20
     private const val MAX_STORED_ENTRIES = 500
+
+    /** Số lần TỐI ĐA cho phép xuất liên tiếp CÙNG 1 nội dung mã trong 1 lượt quét
+     *  liên tục - quét sang mã KHÁC sẽ đếm lại từ đầu. Mặc định 2 lần. */
+    const val DEFAULT_DUPLICATE_LIMIT = 2
+    const val MIN_DUPLICATE_LIMIT = 1
+    const val MAX_DUPLICATE_LIMIT = 20
+
+    fun getDuplicateLimit(context: Context): Int =
+        prefs(context).getInt(KEY_DUPLICATE_LIMIT, DEFAULT_DUPLICATE_LIMIT)
+
+    fun setDuplicateLimit(context: Context, limit: Int) {
+        prefs(context).edit()
+            .putInt(KEY_DUPLICATE_LIMIT, limit.coerceIn(MIN_DUPLICATE_LIMIT, MAX_DUPLICATE_LIMIT))
+            .apply()
+    }
 
     private val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 
