@@ -431,6 +431,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         var repeatRunnable: Runnable? = null
         var longPressRunnable: Runnable? = null
         var longPressTriggered = false
+        var backspaceFired = false  // true nếu repeatRunnable đã xoá ít nhất 1 ký tự
         var popupView: LinearLayout? = null
         var popupChars: List<Char> = emptyList()
         var selectedVariantIndex = 0
@@ -445,9 +446,11 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     // xong nên cảm giác "rung trễ" dù chỉ vài chục mili-giây). Trừ BACKSPACE vì
                     // phím này tự rung theo từng lần xoá khi giữ tay lặp lại (xem handleBackspace()).
                     if (code != "BACKSPACE") VibrationSettings.tick(this@SmartKeyboardService)
+                    backspaceFired = false
                     if (code == "BACKSPACE") {
                         repeatRunnable = object : Runnable {
                             override fun run() {
+                                backspaceFired = true
                                 handleBackspace()
                                 mainHandler.postDelayed(this, 50)
                             }
@@ -492,6 +495,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     repeatRunnable?.let { mainHandler.removeCallbacks(it) }
                     longPressRunnable?.let { mainHandler.removeCallbacks(it) }
                     popupView?.let { rootContainer.removeView(it) }
+                    // Khi ngón tay quét qua phím Backspace (swipe), Android gửi ACTION_CANCEL
+                    // thay vì ACTION_UP nên onKeyTapped không bao giờ được gọi -> không xoá gì.
+                    // Nếu repeatRunnable chưa kịp chạy (chưa xoá lần nào), xoá 1 ký tự ở đây.
+                    if (code == "BACKSPACE" && !backspaceFired) handleBackspace()
                     true
                 }
                 else -> false
