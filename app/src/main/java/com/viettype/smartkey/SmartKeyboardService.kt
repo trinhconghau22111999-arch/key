@@ -46,7 +46,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = lifecycleRegistry
 
-    private enum class Page { LETTERS, SYMBOLS, SYMBOLS2 }
+    private enum class Page { LETTERS, SYMBOLS, SYMBOLS2, NUMPAD }
     private enum class CapsMode { OFF, SINGLE_SHIFT, CAPS_LOCK }
 
     private var currentPage = Page.LETTERS
@@ -150,10 +150,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         row.addView(utilityButton("🌐") { onGlobeKeyPressed() })
         row.addView(utilityButton("QR") { onScanButtonPressed() })
         row.addView(utilityButton("🎤") { onMicButtonPressed() })
-        row.addView(utilityButton(if (currentPage == Page.LETTERS) "?123" else "ABC") {
-            currentPage = if (currentPage == Page.LETTERS) Page.SYMBOLS else Page.LETTERS
+        // Nút "?123"/"ABC" cũ ở đây bị TRÙNG chức năng với phím "SYM"/"ABC" đã có sẵn ngay
+        // trong các hàng phím phía dưới, nên đổi hẳn thành phím tắt mở bàn phím SỐ kiểu máy
+        // tính (trang riêng NUMPAD) cho nhanh, không phụ thuộc đang ở trang nào.
+        row.addView(utilityButton("123") {
+            currentPage = Page.NUMPAD
             rebuildKeyRows()
-        }.also { it.tag = "page_toggle" })
+        })
         return row
     }
 
@@ -213,6 +216,14 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private fun rebuildKeyRows() {
         rowsHost.removeAllViews()
+        letterKeyViews.clear()
+        if (currentPage == Page.NUMPAD) {
+            // Trang số kiểu máy tính có phím Enter cao gấp đôi (chiếm 2 hàng dưới cùng) nên
+            // không dùng chung được vòng lặp hàng-đều-cột như các trang khác - tự dựng riêng.
+            rowsHost.addView(buildNumpadBody())
+            refreshLetterCaseDisplay()
+            return
+        }
         val rows = mutableListOf<List<String>>()
         // "Luôn bật hàng phím số" - chỉ áp dụng cho trang gõ chữ đầu tiên (LETTERS),
         // trang SYMBOLS vốn đã có sẵn hàng số riêng ở trên cùng rồi.
@@ -223,8 +234,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             Page.LETTERS -> lettersRows
             Page.SYMBOLS -> symbolsRows
             Page.SYMBOLS2 -> symbols2Rows
+            Page.NUMPAD -> emptyList() // xử lý riêng ở nhánh return phía trên, không tới đây
         })
-        letterKeyViews.clear()
         for (rowKeys in rows) {
             val rowView = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -235,14 +246,67 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             }
             rowsHost.addView(rowView)
         }
-        // Cập nhật lại nhãn nút chuyển trang (?123 <-> ABC) trên hàng tiện ích.
-        (keyboardBody.getChildAt(1) as? LinearLayout)?.findViewWithTag<TextView>("page_toggle")?.text =
-            if (currentPage == Page.LETTERS) "?123" else "ABC"
         refreshLetterCaseDisplay()
     }
 
-    private fun buildKey(code: String): View {
-        val weight = if (code == "SPACE") 4f else 1f
+    /** Trang bàn phím số (123): cột số bên trái (1-9 + hàng toán tử) chiếm 3 phần bề rộng,
+     *  cột phải 1 phần gồm Xoá / ABC / Enter - riêng Enter cao gấp đôi, chiếm luôn 2 hàng
+     *  dưới cùng, giống bàn phím số máy tính trong ảnh mẫu. */
+    private fun buildNumpadBody(): View {
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48 * 4))
+        }
+
+        val numberColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 3f)
+        }
+        for (rowKeys in listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"))) {
+            val rowView = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            }
+            for (keyCode in rowKeys) rowView.addView(buildKey(keyCode))
+            numberColumn.addView(rowView)
+        }
+        // Hàng toán tử dưới cùng của cột số: "0" rộng gấp đôi các phím còn lại, giống ảnh mẫu.
+        val operatorRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        operatorRow.addView(buildKey("+"))
+        operatorRow.addView(buildKey("-"))
+        operatorRow.addView(buildKey("0", weightOverride = 2f))
+        operatorRow.addView(buildKey("×"))
+        operatorRow.addView(buildKey("/"))
+        numberColumn.addView(operatorRow)
+
+        val rightColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+        }
+        rightColumn.addView(asVerticalWeighted(buildKey("BACKSPACE"), 1f))
+        rightColumn.addView(asVerticalWeighted(buildKey("ABC"), 1f))
+        rightColumn.addView(asVerticalWeighted(buildKey("ENTER"), 2f))
+
+        body.addView(numberColumn)
+        body.addView(rightColumn)
+        return body
+    }
+
+    /** buildKey() vốn set LayoutParams theo kiểu "cột ngang trong 1 hàng" (width=0 co giãn,
+     *  height=MATCH_PARENT) - phím nào cần XẾP DỌC (như cột Xoá/ABC/Enter ở trang số) phải đổi
+     *  lại thành width=MATCH_PARENT, height=0 co giãn thì mới cao đúng tỉ lệ mong muốn. */
+    private fun asVerticalWeighted(view: View, weight: Float): View {
+        view.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, weight).also {
+            it.setMargins(dp(2), dp(2), dp(2), dp(2))
+        }
+        return view
+    }
+
+    private fun buildKey(code: String, weightOverride: Float? = null): View {
+        val weight = weightOverride ?: if (code == "SPACE") 4f else 1f
         val label = displayLabelFor(code)
 
         val keyView = TextView(this).apply {
