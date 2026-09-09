@@ -66,6 +66,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private var scanOverlay: View? = null
     private var cameraProvider: ProcessCameraProvider? = null
+    private var camera: androidx.camera.core.Camera? = null
+    private var torchOn = false
+    private var torchButtonView: TextView? = null
     private var lastQrHandledAt = 0L
 
     // Quét LIÊN TỤC: không tự đóng khung quét sau khi đọc được 1 mã, cho phép quét
@@ -77,6 +80,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var micOverlay: View? = null
+    private var micRecognizedText: String = ""
 
     // ============================== VÒNG ĐỜI ==============================
 
@@ -182,9 +186,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private val symbolsRows = listOf(
         listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
-        listOf("@", "#", "$", "%", "&", "-", "+", "(", ")"),
+        listOf("@", "#", "đ", "_", "&", "-", "+", "(", ")"),
         listOf("*", "\"", "'", ":", ";", "!", "?", "BACKSPACE"),
-        listOf("ABC", "COMMA", "SPACE", "PERIOD", "ENTER"),
+        listOf("ABC", "LT", "SPACE", "GT", "ENTER"),
     )
 
     /** Hàng số 1-0 dùng cho tuỳ chọn "Luôn bật hàng phím số" ở trang gõ chữ. */
@@ -265,6 +269,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         "ENTER" -> "⏎"
         "COMMA" -> ","
         "PERIOD" -> "."
+        "LT" -> "<"
+        "GT" -> ">"
         "SYM" -> "?123"
         "ABC" -> "ABC"
         else -> if (code.length == 1 && capsMode != CapsMode.OFF) code.uppercase() else code
@@ -409,6 +415,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             "ENTER" -> handleEnter()
             "COMMA" -> commitPunctuation(",")
             "PERIOD" -> commitPunctuation(".")
+            "LT" -> commitPunctuation("<")
+            "GT" -> commitPunctuation(">")
             "SYM" -> { currentPage = Page.SYMBOLS; rebuildKeyRows() }
             "ABC" -> { currentPage = Page.LETTERS; rebuildKeyRows() }
             else -> if (code.length == 1) handleLetterOrSymbolKey(code[0]) else Unit
@@ -579,6 +587,21 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             setBackgroundColor(Color.BLACK)
             addView(previewView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
             addView(TextView(this@SmartKeyboardService).apply {
+                text = "🔦"
+                setTextColor(Color.WHITE)
+                textSize = 15f
+                setPadding(dp(16), dp(8), dp(16), dp(8))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(6).toFloat()
+                    setColor(Color.parseColor("#88000000"))
+                }
+                setOnClickListener { toggleTorch() }
+                torchButtonView = this
+            }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).also {
+                it.gravity = Gravity.TOP or Gravity.START
+                it.setMargins(dp(8), dp(8), 0, 0)
+            })
+            addView(TextView(this@SmartKeyboardService).apply {
                 text = "Huỷ"
                 setTextColor(Color.WHITE)
                 textSize = 15f
@@ -612,12 +635,28 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     analyzeFrameForBarcode(imageProxy, scanner)
                 }
                 provider.unbindAll()
-                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+                camera = provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
             } catch (e: Exception) {
                 showToast("Không mở được camera: ${e.message}")
                 closeScanOverlay()
             }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    /** Bật/tắt đèn flash của camera sau trong lúc đang quét mã. */
+    private fun toggleTorch() {
+        val cam = camera ?: return
+        if (cam.cameraInfo.hasFlashUnit() != true) {
+            showToast("Thiết bị không có đèn flash.")
+            return
+        }
+        torchOn = !torchOn
+        cam.cameraControl.enableTorch(torchOn)
+        torchButtonView?.text = if (torchOn) "💡" else "🔦"
+        torchButtonView?.background = GradientDrawable().apply {
+            cornerRadius = dp(6).toFloat()
+            setColor(if (torchOn) ThemeSettings.getAccentColor(this@SmartKeyboardService) else Color.parseColor("#88000000"))
+        }
     }
 
     @androidx.camera.core.ExperimentalGetImage
@@ -672,6 +711,15 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     }
 
     private fun closeScanOverlay() {
+        if (torchOn) {
+            try {
+                camera?.cameraControl?.enableTorch(false)
+            } catch (ignored: Exception) {
+            }
+        }
+        torchOn = false
+        torchButtonView = null
+        camera = null
         scanOverlay?.let { rootContainer.removeView(it) }
         scanOverlay = null
         try {
@@ -702,6 +750,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private fun showMicOverlayAndListen() {
         if (micOverlay != null) return
         keyboardBody.visibility = View.GONE
+        micRecognizedText = ""
 
         val statusText = TextView(this).apply {
             text = "Đang nghe..."
@@ -715,15 +764,30 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             addView(statusText, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).also {
                 it.gravity = Gravity.CENTER
             })
-            addView(TextView(this@SmartKeyboardService).apply {
-                text = "Dừng"
-                setTextColor(Color.WHITE)
-                setPadding(dp(16), dp(8), dp(16), dp(8))
-                background = GradientDrawable().apply {
-                    cornerRadius = dp(6).toFloat()
-                    setColor(Color.parseColor("#552A1F4A"))
-                }
-                setOnClickListener { closeMicOverlay() }
+            addView(LinearLayout(this@SmartKeyboardService).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(TextView(this@SmartKeyboardService).apply {
+                    text = "Huỷ"
+                    setTextColor(Color.WHITE)
+                    setPadding(dp(16), dp(8), dp(16), dp(8))
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(6).toFloat()
+                        setColor(Color.parseColor("#552A1F4A"))
+                    }
+                    setOnClickListener { closeMicOverlay() }
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+                addView(TextView(this@SmartKeyboardService).apply {
+                    text = "Gửi"
+                    setTextColor(Color.WHITE)
+                    setPadding(dp(16), dp(8), dp(16), dp(8))
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(6).toFloat()
+                        setColor(Color.parseColor("#552A1F4A"))
+                    }
+                    setOnClickListener { sendMicTextAndClose() }
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).also {
+                    it.marginStart = dp(10)
+                })
             }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).also {
                 it.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
                 it.setMargins(0, 0, 0, dp(12))
@@ -743,17 +807,19 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             setRecognitionListener(object : RecognitionListener {
                 override fun onResults(results: android.os.Bundle?) {
                     val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                    if (!text.isNullOrBlank()) {
-                        currentInputConnection?.commitText("$text ", 1)
-                    }
-                    closeMicOverlay()
+                    if (!text.isNullOrBlank()) micRecognizedText = text
+                    // Không tự gửi & đóng ở đây nữa - người dùng chủ động bấm "Gửi" khi
+                    // đã ưng ý với nội dung đang nhận dạng (xem sendMicTextAndClose()).
                 }
                 override fun onError(error: Int) {
                     closeMicOverlay()
                 }
                 override fun onPartialResults(partialResults: android.os.Bundle?) {
                     val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                    if (!text.isNullOrBlank()) statusText.text = text
+                    if (!text.isNullOrBlank()) {
+                        statusText.text = text
+                        micRecognizedText = text
+                    }
                 }
                 override fun onReadyForSpeech(params: android.os.Bundle?) {}
                 override fun onBeginningOfSpeech() {}
@@ -766,12 +832,23 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         }
     }
 
+    /** Gửi nội dung đang nhận dạng được (dù là kết quả tạm hay đã chốt) vào ô nhập, rồi đóng
+     *  khung ghi âm - thay cho nút "Dừng" cũ vốn chỉ đóng khung mà không gửi gì cả. */
+    private fun sendMicTextAndClose() {
+        val text = micRecognizedText
+        if (text.isNotBlank()) {
+            currentInputConnection?.commitText("$text ", 1)
+        }
+        closeMicOverlay()
+    }
+
     private fun closeMicOverlay() {
         speechRecognizer?.stopListening()
         speechRecognizer?.destroy()
         speechRecognizer = null
         micOverlay?.let { rootContainer.removeView(it) }
         micOverlay = null
+        micRecognizedText = ""
         keyboardBody.visibility = View.VISIBLE
     }
 
