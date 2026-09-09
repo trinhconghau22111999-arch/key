@@ -758,15 +758,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             LedEffectSettings.ColorMode.SINGLE_COLOR -> {
                 // wave: 0..1 theo dạng sóng cos (đỉnh=1 tại phase=0, đáy=0 tại phase=0.5)
                 val wave = ((kotlin.math.cos(phase * 2 * Math.PI) + 1) / 2).toFloat()
-                // Dao động giữa màu ĐẬM (saturation cao, value thấp) và màu SÁNG (saturation thấp, value cao)
-                // để hiệu ứng "thở" nổi bật, không chỉ đơn giản là tối-sáng cùng tone.
-                val satLight = (singleHsv[1] * 0.35f).coerceIn(0f, 1f)  // màu nhạt/sáng: giảm bão hoà
-                val valLight = (singleHsv[2] * 1.0f).coerceAtMost(1f)    // sáng: giữ value ở max
-                val satDark  = (singleHsv[1] * 1.0f).coerceIn(0f, 1f)   // màu đậm: giữ bão hoà gốc
-                val valDark  = (singleHsv[2] * 0.35f).coerceIn(0.15f, 1f) // đậm: kéo value xuống
-                val sat = satDark + (satLight - satDark) * wave
-                val value = valDark + (valLight - valDark) * wave
-                Color.HSVToColor(floatArrayOf(singleHsv[0], sat, value))
+                // Đỉnh sóng (wave=1) = đúng màu accent gốc (giống màu viền tĩnh).
+                // Đáy sóng (wave=0) = tối/đậm hơn (giảm value xuống ~20%) để tạo hiệu ứng "thở".
+                // Saturation giữ nguyên suốt - không đổi tone màu.
+                val valPeak = singleHsv[2]
+                val valDark = (singleHsv[2] * 0.20f).coerceIn(0.05f, 1f)
+                val value = valDark + (valPeak - valDark) * wave
+                Color.HSVToColor(floatArrayOf(singleHsv[0], singleHsv[1], value))
             }
         }
     }
