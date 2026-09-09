@@ -58,10 +58,10 @@ class SettingsActivity : AppCompatActivity() {
         contentBox.addView(sectionTitle("Bố cục bàn phím"))
         contentBox.addView(buildLayoutSection())
         contentBox.addView(spacer())
-        contentBox.addView(sectionTitle("Màu chủ đạo"))
+        contentBox.addView(sectionTitle("Màu sắc"))
         contentBox.addView(buildColorSection())
         contentBox.addView(spacer())
-        contentBox.addView(sectionTitle("Hiệu ứng viền sáng"))
+        contentBox.addView(sectionTitle("Hiệu ứng đèn RGB chạy"))
         contentBox.addView(buildLedSection())
         contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Rung khi gõ"))
@@ -148,8 +148,14 @@ class SettingsActivity : AppCompatActivity() {
         return box
     }
 
-    // ============================== MÀU CHỦ ĐẠO ==============================
+    // ============================== MÀU SẮC ==============================
     private fun buildColorSection(): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(bodyText(
+            "Chọn màu viền bàn phím và giao diện sáng/tối - áp dụng ngay cho bàn phím, " +
+                "không cần khởi động lại."
+        ))
+
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             // Cho phép cuộn ngang vì giờ có 10 màu, không đủ chỗ hiển thị hết trên 1 hàng.
@@ -174,31 +180,97 @@ class SettingsActivity : AppCompatActivity() {
             }
             row.addView(swatch)
         }
-        val scroll = android.widget.HorizontalScrollView(this).apply { addView(row) }
-        return scroll
+        val scroll = android.widget.HorizontalScrollView(this).apply {
+            addView(row)
+            setPadding(0, 12, 0, 12)
+        }
+        box.addView(scroll)
+
+        // Giao diện sáng/tối - đổi toàn bộ nền khối bàn phím + màu nền từng phím.
+        val isDark = ThemeSettings.isDarkTheme(this)
+        box.addView(pillSwitchButton(
+            if (isDark) "🌙  Đang dùng nền Tối" else "☀️  Đang dùng nền Sáng"
+        ) {
+            ThemeSettings.setDarkTheme(this@SettingsActivity, !isDark)
+            rebuildAll()
+        })
+        return box
     }
 
-    // ============================== HIỆU ỨNG VIỀN SÁNG ==============================
+    /** Nút bo tròn có viền nổi bật màu chủ đạo, bấm vào là chuyển sang trạng thái khác ngay
+     *  (dùng cho công tắc sáng/tối - không cần icon check riêng vì nhãn đã tự nói rõ trạng thái). */
+    private fun pillSwitchButton(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = label
+        setTextColor(Color.WHITE)
+        textSize = 15f
+        gravity = Gravity.CENTER
+        setPadding(24, 28, 24, 28)
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).also { it.setMargins(0, 8, 0, 0) }
+        background = GradientDrawable().apply {
+            cornerRadius = 28f
+            setColor(Color.parseColor("#1A0F2E"))
+            setStroke(4, ThemeSettings.getAccentColor(this@SettingsActivity))
+        }
+        setOnClickListener { onClick() }
+    }
+
+    // ============================== HIỆU ỨNG ĐÈN RGB CHẠY ==============================
 
     private fun buildLedSection(): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val modes = LedEffectSettings.Mode.entries
-        val modeNames = mapOf(
-            LedEffectSettings.Mode.OFF to "Tắt",
-            LedEffectSettings.Mode.RAINBOW_CYCLE to "Cầu vồng chạy",
-            LedEffectSettings.Mode.BREATHING to "Thở (mờ dần - sáng dần)",
-            LedEffectSettings.Mode.STATIC_COLOR to "Màu chủ đạo cố định",
-        )
-        val current = LedEffectSettings.getMode(this)
+        box.addView(bodyText(
+            "Màu viền phím tự động \"chạy\" liên tục (giống bàn phím cơ gaming thật). " +
+                "Mặc định tắt (tốn pin hơn màu tĩnh bình thường)."
+        ))
 
-        val modeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for (mode in modes) {
-            modeRow.addView(chip(modeNames[mode] ?: mode.name, mode == current) {
-                LedEffectSettings.setMode(this, mode)
-                rebuildAll()
-            })
+        val enabled = LedEffectSettings.isEnabled(this)
+        box.addView(checkToggleButton(
+            if (enabled) "Đang BẬT hiệu ứng RGB chạy" else "Đang TẮT hiệu ứng RGB chạy",
+            checked = enabled
+        ) {
+            LedEffectSettings.setEnabled(this@SettingsActivity, !enabled)
+            rebuildAll()
+        })
+
+        if (!enabled) return box // các tuỳ chọn bên dưới chỉ có ý nghĩa khi hiệu ứng đang bật
+
+        // Nhiều màu (cầu vồng) hay 1 màu (đúng màu viền đang chọn ở mục Màu sắc).
+        val colorMode = LedEffectSettings.getColorMode(this)
+        val colorModeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 12, 0, 0)
         }
-        box.addView(modeRow)
+        colorModeRow.addView(chip("Nhiều màu", colorMode == LedEffectSettings.ColorMode.MULTI_COLOR) {
+            LedEffectSettings.setColorMode(this, LedEffectSettings.ColorMode.MULTI_COLOR)
+            rebuildAll()
+        })
+        colorModeRow.addView(chip("1 màu (màu viền)", colorMode == LedEffectSettings.ColorMode.SINGLE_COLOR) {
+            LedEffectSettings.setColorMode(this, LedEffectSettings.ColorMode.SINGLE_COLOR)
+            rebuildAll()
+        })
+        box.addView(colorModeRow)
+
+        // Hướng chạy của hiệu ứng.
+        val direction = LedEffectSettings.getDirection(this)
+        val directionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 4, 0, 0)
+        }
+        directionRow.addView(chip("Trái -> Phải", direction == LedEffectSettings.Direction.LEFT_TO_RIGHT) {
+            LedEffectSettings.setDirection(this, LedEffectSettings.Direction.LEFT_TO_RIGHT)
+            rebuildAll()
+        })
+        directionRow.addView(chip("Trên -> Dưới", direction == LedEffectSettings.Direction.TOP_TO_BOTTOM) {
+            LedEffectSettings.setDirection(this, LedEffectSettings.Direction.TOP_TO_BOTTOM)
+            rebuildAll()
+        })
+        directionRow.addView(chip("Chéo góc", direction == LedEffectSettings.Direction.DIAGONAL) {
+            LedEffectSettings.setDirection(this, LedEffectSettings.Direction.DIAGONAL)
+            rebuildAll()
+        })
+        box.addView(directionRow)
 
         box.addView(bodyText("Tốc độ chạy hiệu ứng"))
         box.addView(SeekBar(this).apply {
@@ -213,6 +285,25 @@ class SettingsActivity : AppCompatActivity() {
             })
         })
         return box
+    }
+
+    /** Nút công tắc bật/tắt kiểu checkbox (✅/⬜ + nhãn), viền nổi bật màu chủ đạo khi đang bật -
+     *  giống nút "Đang BẬT hiệu ứng RGB chạy" trong ảnh mẫu. */
+    private fun checkToggleButton(label: String, checked: Boolean, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = (if (checked) "✅  " else "⬜  ") + label
+        setTextColor(Color.WHITE)
+        textSize = 15f
+        gravity = Gravity.CENTER
+        setPadding(24, 28, 24, 28)
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).also { it.setMargins(0, 8, 0, 0) }
+        background = GradientDrawable().apply {
+            cornerRadius = 28f
+            setColor(Color.parseColor("#1A0F2E"))
+            setStroke(4, if (checked) ThemeSettings.getAccentColor(this@SettingsActivity) else Color.parseColor("#55FFFFFF"))
+        }
+        setOnClickListener { onClick() }
     }
 
     // ============================== RUNG KHI GÕ ==============================

@@ -3,39 +3,52 @@ package com.viettype.smartkey
 import android.content.Context
 
 /**
- * Cấu hình hiệu ứng viền sáng đổi màu chạy dọc mép trên của bàn phím (trang trí,
- * không ảnh hưởng chức năng gõ) - tương tự đèn LED RGB trên bàn phím cơ vật lý.
+ * Cấu hình hiệu ứng đèn RGB "chạy" liên tục quanh VIỀN CÁC PHÍM (giống bàn
+ * phím cơ gaming thật) - thuần trang trí, không ảnh hưởng chức năng gõ.
+ * Mặc định TẮT vì tốn pin hơn màu viền tĩnh bình thường.
  */
 object LedEffectSettings {
 
-    enum class Mode { OFF, RAINBOW_CYCLE, BREATHING, STATIC_COLOR }
-    enum class Direction { LEFT_TO_RIGHT, RIGHT_TO_LEFT }
+    /** MULTI_COLOR = chạy cầu vồng nhiều màu; SINGLE_COLOR = chạy 1 màu duy nhất
+     *  (dùng đúng màu viền đang chọn ở mục Màu sắc). */
+    enum class ColorMode { MULTI_COLOR, SINGLE_COLOR }
+
+    /** Hướng chạy của hiệu ứng dọc theo lưới phím. */
+    enum class Direction { LEFT_TO_RIGHT, TOP_TO_BOTTOM, DIAGONAL }
 
     private const val PREFS_NAME = "led_effect_settings"
-    private const val KEY_MODE = "mode"
+    private const val KEY_ENABLED = "enabled"
+    private const val KEY_COLOR_MODE = "color_mode"
     private const val KEY_DIRECTION = "direction"
     private const val KEY_SPEED_PERCENT = "speed_percent"
 
-    fun getMode(context: Context): Mode {
-        val raw = prefs(context).getString(KEY_MODE, Mode.OFF.name) ?: Mode.OFF.name
+    fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, false)
+
+    fun setEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_ENABLED, enabled).apply()
+    }
+
+    fun getColorMode(context: Context): ColorMode {
+        val raw = prefs(context).getString(KEY_COLOR_MODE, ColorMode.MULTI_COLOR.name)
+            ?: ColorMode.MULTI_COLOR.name
         return try {
-            Mode.valueOf(raw)
+            ColorMode.valueOf(raw)
         } catch (e: IllegalArgumentException) {
-            Mode.OFF
+            ColorMode.MULTI_COLOR
         }
     }
 
-    fun setMode(context: Context, mode: Mode) {
-        prefs(context).edit().putString(KEY_MODE, mode.name).apply()
+    fun setColorMode(context: Context, mode: ColorMode) {
+        prefs(context).edit().putString(KEY_COLOR_MODE, mode.name).apply()
     }
 
     fun getDirection(context: Context): Direction {
-        val raw = prefs(context).getString(KEY_DIRECTION, Direction.LEFT_TO_RIGHT.name)
-            ?: Direction.LEFT_TO_RIGHT.name
+        val raw = prefs(context).getString(KEY_DIRECTION, Direction.DIAGONAL.name)
+            ?: Direction.DIAGONAL.name
         return try {
             Direction.valueOf(raw)
         } catch (e: IllegalArgumentException) {
-            Direction.LEFT_TO_RIGHT
+            Direction.DIAGONAL
         }
     }
 

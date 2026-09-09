@@ -59,8 +59,14 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private lateinit var rootContainer: FrameLayout
     private lateinit var keyboardBody: LinearLayout
     private lateinit var ledStripView: View
+    private lateinit var utilityRowView: View
     private lateinit var rowsHost: LinearLayout
     private val letterKeyViews = mutableListOf<Pair<TextView, Char>>() // để đổi hoa/thường hàng loạt khi shift đổi
+
+    /** 1 "khe" viền phím tham gia hiệu ứng RGB chạy: nền vẽ của phím + vị trí chuẩn
+     *  hoá (0..1) của phím đó trong lưới, dùng để tính độ trễ pha khi hiệu ứng chạy qua. */
+    private data class LedKeySlot(val drawable: GradientDrawable, val normX: Float, val normY: Float)
+    private val ledKeySlots = mutableListOf<LedKeySlot>()
 
     private var ledAnimator: ValueAnimator? = null
 
@@ -94,7 +100,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
         keyboardBody = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#1A0F2E"))
+            setBackgroundColor(ThemeSettings.keyboardBackgroundColor(this@SmartKeyboardService))
         }
 
         ledStripView = View(this).apply {
@@ -102,7 +108,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         }
         keyboardBody.addView(ledStripView)
 
-        keyboardBody.addView(buildUtilityRow())
+        utilityRowView = buildUtilityRow()
+        keyboardBody.addView(utilityRowView)
 
         rowsHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         keyboardBody.addView(rowsHost)
@@ -120,8 +127,26 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         autoCapPending = true
         capsMode = CapsMode.OFF
+        // Người dùng có thể vừa đổi màu viền/nền sáng-tối/hiệu ứng RGB ở màn Cài đặt rồi
+        // quay lại gõ ngay - vẽ lại toàn bộ theo cấu hình mới nhất, không cần khởi động lại.
+        refreshTheme()
         refreshLetterCaseDisplay()
         startLedAnimationIfNeeded()
+    }
+
+    /** Vẽ lại nền khối bàn phím + hàng tiện ích + toàn bộ phím theo màu viền/nền sáng-tối
+     *  đang chọn trong Cài đặt (Màu sắc). Gọi mỗi lần bàn phím hiện lên để áp dụng ngay
+     *  thay đổi vừa chọn mà không cần khởi động lại app/điện thoại. */
+    private fun refreshTheme() {
+        keyboardBody.setBackgroundColor(ThemeSettings.keyboardBackgroundColor(this))
+        val newUtilityRow = buildUtilityRow()
+        val utilityIndex = keyboardBody.indexOfChild(utilityRowView)
+        if (utilityIndex >= 0) {
+            keyboardBody.removeView(utilityRowView)
+            keyboardBody.addView(newUtilityRow, utilityIndex)
+        }
+        utilityRowView = newUtilityRow
+        rebuildKeyRows() // vẽ lại từng phím với màu nền/chữ theo theme mới
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -164,12 +189,12 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         return TextView(this).apply {
             text = label
             gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
+            setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
             textSize = 14f
             layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) }
             background = GradientDrawable().apply {
                 cornerRadius = dp(6).toFloat()
-                setColor(Color.parseColor("#332A1F4A"))
+                setColor(ThemeSettings.utilityButtonBackgroundColor(this@SmartKeyboardService))
             }
             setOnClickListener {
                 VibrationSettings.tick(this@SmartKeyboardService)
@@ -217,6 +242,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private fun rebuildKeyRows() {
         rowsHost.removeAllViews()
         letterKeyViews.clear()
+        ledKeySlots.clear() // phím cũ đã bị gỡ khỏi cây view - bỏ hết khe viền cũ, tránh vẽ vào phím đã mất
         if (currentPage == Page.NUMPAD) {
             // Trang số kiểu máy tính có phím Enter cao gấp đôi (chiếm 2 hàng dưới cùng) nên
             // không dùng chung được vòng lặp hàng-đều-cột như các trang khác - tự dựng riêng.
@@ -236,13 +262,17 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             Page.SYMBOLS2 -> symbols2Rows
             Page.NUMPAD -> emptyList() // xử lý riêng ở nhánh return phía trên, không tới đây
         })
-        for (rowKeys in rows) {
+        val rowCount = rows.size
+        for ((rowIndex, rowKeys) in rows.withIndex()) {
             val rowView = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
             }
-            for (keyCode in rowKeys) {
-                rowView.addView(buildKey(keyCode))
+            val colCount = rowKeys.size
+            val normY = if (rowCount > 1) rowIndex / (rowCount - 1).toFloat() else 0f
+            for ((colIndex, keyCode) in rowKeys.withIndex()) {
+                val normX = if (colCount > 1) colIndex / (colCount - 1).toFloat() else 0f
+                rowView.addView(buildKey(keyCode, normX = normX, normY = normY))
             }
             rowsHost.addView(rowView)
         }
@@ -262,12 +292,20 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 3f)
         }
-        for (rowKeys in listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"))) {
+        // Cột số có 4 hàng (3 hàng số + 1 hàng toán tử) - normY tính theo hàng trong tổng 4 hàng
+        // để hiệu ứng RGB "Trên -> Dưới"/"Chéo góc" chạy mượt xuyên suốt cả trang bàn phím số.
+        val numpadRowCount = 4
+        val numberRowsKeys = listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"))
+        for ((rowIndex, rowKeys) in numberRowsKeys.withIndex()) {
             val rowView = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             }
-            for (keyCode in rowKeys) rowView.addView(buildKey(keyCode))
+            val normY = rowIndex / (numpadRowCount - 1).toFloat()
+            for ((colIndex, keyCode) in rowKeys.withIndex()) {
+                val normX = colIndex / (rowKeys.size - 1).toFloat()
+                rowView.addView(buildKey(keyCode, normX = normX, normY = normY))
+            }
             numberColumn.addView(rowView)
         }
         // Hàng toán tử dưới cùng của cột số: "0" rộng gấp đôi các phím còn lại, giống ảnh mẫu.
@@ -275,20 +313,21 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         }
-        operatorRow.addView(buildKey("+"))
-        operatorRow.addView(buildKey("-"))
-        operatorRow.addView(buildKey("0", weightOverride = 2f))
-        operatorRow.addView(buildKey("×"))
-        operatorRow.addView(buildKey("/"))
+        val operatorNormY = 1f // hàng cuối cùng trong 4 hàng
+        operatorRow.addView(buildKey("+", normX = 0f, normY = operatorNormY))
+        operatorRow.addView(buildKey("-", normX = 0.25f, normY = operatorNormY))
+        operatorRow.addView(buildKey("0", weightOverride = 2f, normX = 0.5f, normY = operatorNormY))
+        operatorRow.addView(buildKey("×", normX = 0.75f, normY = operatorNormY))
+        operatorRow.addView(buildKey("/", normX = 1f, normY = operatorNormY))
         numberColumn.addView(operatorRow)
 
         val rightColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
         }
-        rightColumn.addView(asVerticalWeighted(buildKey("BACKSPACE"), 1f))
-        rightColumn.addView(asVerticalWeighted(buildKey("ABC"), 1f))
-        rightColumn.addView(asVerticalWeighted(buildKey("ENTER"), 2f))
+        rightColumn.addView(asVerticalWeighted(buildKey("BACKSPACE", normX = 1f, normY = 0f), 1f))
+        rightColumn.addView(asVerticalWeighted(buildKey("ABC", normX = 1f, normY = 0.5f), 1f))
+        rightColumn.addView(asVerticalWeighted(buildKey("ENTER", normX = 1f, normY = 1f), 2f))
 
         body.addView(numberColumn)
         body.addView(rightColumn)
@@ -305,9 +344,18 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         return view
     }
 
-    private fun buildKey(code: String, weightOverride: Float? = null): View {
+    private fun buildKey(code: String, weightOverride: Float? = null, normX: Float = 0f, normY: Float = 0f): View {
         val weight = weightOverride ?: if (code == "SPACE") 4f else 1f
         val label = displayLabelFor(code)
+
+        val keyBackground = GradientDrawable().apply {
+            cornerRadius = dp(6).toFloat()
+            setColor(ThemeSettings.keyBackgroundColor(this@SmartKeyboardService))
+            // Viền bắt đầu trong suốt, độ dày 0 - hiệu ứng RGB chạy (nếu đang BẬT) sẽ tự
+            // set màu + độ dày viền theo thời gian thực, xem startLedAnimationIfNeeded().
+            setStroke(0, Color.TRANSPARENT)
+        }
+        ledKeySlots.add(LedKeySlot(keyBackground, normX, normY))
 
         val keyView = TextView(this).apply {
             text = label
@@ -320,13 +368,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 "ENTER", "SHIFT", "BACKSPACE" -> 22f
                 else -> if (code.length == 1) 18f else 13f
             }
-            setTextColor(Color.WHITE)
+            setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight)
                 .also { it.setMargins(dp(2), dp(2), dp(2), dp(2)) }
-            background = GradientDrawable().apply {
-                cornerRadius = dp(6).toFloat()
-                setColor(Color.parseColor("#2A1F4A"))
-            }
+            background = keyBackground
         }
 
         if (code.length == 1 && code[0].isLetter() && currentPage != Page.SYMBOLS2) {
@@ -439,7 +484,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             orientation = LinearLayout.HORIZONTAL
             background = GradientDrawable().apply {
                 cornerRadius = dp(8).toFloat()
-                setColor(Color.parseColor("#2A1F4A"))
+                setColor(ThemeSettings.keyBackgroundColor(this@SmartKeyboardService))
             }
         }
         for ((index, ch) in chars.withIndex()) {
@@ -447,7 +492,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 text = ch.toString()
                 textSize = 16f
                 gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
+                setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
                 setPadding(dp(10), dp(8), dp(10), dp(8))
                 setBackgroundColor(if (index == selectedIndex) ThemeSettings.getAccentColor(this@SmartKeyboardService) else Color.TRANSPARENT)
             })
@@ -607,42 +652,62 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     // ============================== HIỆU ỨNG VIỀN SÁNG ==============================
 
+    /** Độ dày viền phím lúc hiệu ứng RGB đang chạy. */
+    private val ledBorderWidthPx get() = dp(2)
+
     private fun startLedAnimationIfNeeded() {
         ledAnimator?.cancel()
-        val mode = LedEffectSettings.getMode(this)
-        if (mode == LedEffectSettings.Mode.OFF) {
+
+        if (!LedEffectSettings.isEnabled(this)) {
+            // Tắt hẳn - trả viền mọi phím + dải đèn trên cùng về trong suốt.
             ledStripView.setBackgroundColor(Color.TRANSPARENT)
-            return
-        }
-        if (mode == LedEffectSettings.Mode.STATIC_COLOR) {
-            ledStripView.setBackgroundColor(ThemeSettings.getAccentColor(this))
+            for (slot in ledKeySlots) slot.drawable.setStroke(0, Color.TRANSPARENT)
             return
         }
 
+        val colorMode = LedEffectSettings.getColorMode(this)
+        val direction = LedEffectSettings.getDirection(this)
         val duration = LedEffectSettings.cycleDurationMs(this)
-        val reversed = LedEffectSettings.getDirection(this) == LedEffectSettings.Direction.RIGHT_TO_LEFT
+        val singleBaseColor = ThemeSettings.getAccentColor(this)
+        val singleHsv = FloatArray(3).also { Color.colorToHSV(singleBaseColor, it) }
+
         ledAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             this.duration = duration
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener { animator ->
-                var t = animator.animatedValue as Float
-                if (reversed) t = 1f - t
-                val color = when (mode) {
-                    LedEffectSettings.Mode.RAINBOW_CYCLE -> Color.HSVToColor(floatArrayOf(t * 360f, 0.85f, 1f))
-                    LedEffectSettings.Mode.BREATHING -> {
-                        val base = ThemeSettings.getAccentColor(this@SmartKeyboardService)
-                        val brightness = 0.35f + 0.65f * (0.5f - 0.5f * kotlin.math.cos(t * 2 * Math.PI)).toFloat()
-                        val hsv = FloatArray(3)
-                        Color.colorToHSV(base, hsv)
-                        hsv[2] = brightness
-                        Color.HSVToColor(hsv)
+                val globalT = animator.animatedValue as Float
+
+                // Dải đèn mỏng trên cùng - hiển thị đúng màu đang "chạy" tới ngay lúc này (pha 0).
+                ledStripView.setBackgroundColor(colorAtPhase(globalT, colorMode, singleHsv))
+
+                // Viền từng phím "chạy" theo đúng hướng đã chọn - mỗi phím trễ pha theo vị trí
+                // của nó trong lưới (trái->phải dùng normX, trên->dưới dùng normY, chéo góc dùng
+                // trung bình cả 2) nên màu lan dần qua bàn phím giống đèn LED chạy thật.
+                for (slot in ledKeySlots) {
+                    val posAlong = when (direction) {
+                        LedEffectSettings.Direction.LEFT_TO_RIGHT -> slot.normX
+                        LedEffectSettings.Direction.TOP_TO_BOTTOM -> slot.normY
+                        LedEffectSettings.Direction.DIAGONAL -> (slot.normX + slot.normY) / 2f
                     }
-                    else -> Color.TRANSPARENT
+                    val phase = ((globalT + posAlong) % 1f + 1f) % 1f
+                    slot.drawable.setStroke(ledBorderWidthPx, colorAtPhase(phase, colorMode, singleHsv))
                 }
-                ledStripView.setBackgroundColor(color)
             }
             start()
+        }
+    }
+
+    /** Màu tại 1 pha (0..1) của hiệu ứng - "Nhiều màu" quét cầu vồng đủ 360 độ hue; "1 màu" giữ
+     *  nguyên màu viền đang chọn, chỉ nhấp nháy độ sáng theo dạng sóng để tạo cảm giác đang "chạy". */
+    private fun colorAtPhase(phase: Float, colorMode: LedEffectSettings.ColorMode, singleHsv: FloatArray): Int {
+        return when (colorMode) {
+            LedEffectSettings.ColorMode.MULTI_COLOR -> Color.HSVToColor(floatArrayOf(phase * 360f, 0.85f, 1f))
+            LedEffectSettings.ColorMode.SINGLE_COLOR -> {
+                val wave = ((kotlin.math.cos(phase * 2 * Math.PI) + 1) / 2).toFloat() // 0..1, đỉnh sáng nhất tại phase=0
+                val hsv = floatArrayOf(singleHsv[0], singleHsv[1], 0.3f + 0.7f * wave)
+                Color.HSVToColor(hsv)
+            }
         }
     }
 
