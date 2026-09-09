@@ -231,28 +231,30 @@ object TelexEngine {
 
         // 'w' sau phụ âm cuối: tìm nguyên âm o/u gần nhất từ cuối, biến đổi nó
         // Ví dụ: "trong" + w -> "trông", "nhung" + w -> "nhưng"
-        val transformResult = transformLastVowelWithW(word, keyIsUpper)
-        if (transformResult != null) return transformResult
-
-        // Không tìm thấy nguyên âm nào phù hợp -> gõ 'ư' (hoặc 'w' nếu muốn escape)
-        return word + (if (keyIsUpper) 'Ư' else 'ư')
+        // Nếu nguyên âm cuối là a/e/i/y (vd "tat","set") -> không áp w, trả null
+        // để 'w' được gõ thẳng ra như ký tự bình thường, tránh chèn 'ư' nhầm.
+        return transformLastVowelWithW(word, keyIsUpper)
     }
 
     /**
-     * Tìm nguyên âm 'o' hoặc 'u' gần cuối nhất trong [word] (bỏ qua phụ âm cuối),
-     * biến đổi thành 'ơ'/'ư'. Dùng cho: "trong"+'w' -> "trông", "nhung"+'w' -> "nhưng".
+     * Tìm nguyên âm a/o/u gần cuối nhất trong [word] (bỏ qua phụ âm cuối), biến đổi:
+     *   a -> ă, o -> ơ, u -> ư
+     * Dùng cho: "trong"+'w' -> "trông", "nhung"+'w' -> "nhưng", "tat"+'w' -> "tăt".
+     * Chỉ áp dụng khi nguyên âm đó KHÔNG phải ký tự cuối (tức sau nó còn phụ âm) -
+     * trường hợp nguyên âm là ký tự cuối đã được xử lý riêng ở applyW() phía trên.
      */
     private fun transformLastVowelWithW(word: String, keyIsUpper: Boolean): String? {
-        // Tìm từ cuối lùi dần, bỏ qua phụ âm, đến khi gặp nguyên âm o/u
         for (i in word.indices.reversed()) {
             val c    = word[i]
             val base = stripTone(c).lowercaseChar()
             if (base in ALL_VOWELS) {
-                // Chỉ xử lý o -> ơ hoặc u -> ư
+                // Chỉ áp w khi nguyên âm này không phải ký tự cuối (còn phụ âm theo sau)
+                if (i == word.length - 1) return null
                 val rep: Char = when (base) {
+                    'a'  -> if (c.isUpperCase()) 'Ă' else 'ă'
                     'o'  -> if (c.isUpperCase()) 'Ơ' else 'ơ'
                     'u'  -> if (c.isUpperCase()) 'Ư' else 'ư'
-                    else -> return null  // nguyên âm khác (a, e, i...) -> không áp w vào đây
+                    else -> return null  // e/i/y không có dạng w tương ứng
                 }
                 val tone = extractTone(c)
                 val fin  = if (tone != Tone.NONE) applyToneToChar(rep, tone) else rep
