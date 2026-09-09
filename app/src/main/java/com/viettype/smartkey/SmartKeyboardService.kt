@@ -46,7 +46,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = lifecycleRegistry
 
-    private enum class Page { LETTERS, SYMBOLS }
+    private enum class Page { LETTERS, SYMBOLS, SYMBOLS2 }
     private enum class CapsMode { OFF, SINGLE_SHIFT, CAPS_LOCK }
 
     private var currentPage = Page.LETTERS
@@ -187,7 +187,17 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private val symbolsRows = listOf(
         listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
         listOf("@", "#", "đ", "_", "&", "-", "+", "(", ")"),
-        listOf("*", "\"", "'", ":", ";", "!", "?", "BACKSPACE"),
+        listOf("*", "PAGE3", "\"", "'", ":", ";", "!", "?", "BACKSPACE"),
+        listOf("ABC", "LT", "SPACE", "GT", "ENTER"),
+    )
+
+    /** Trang 3 - thêm các ký hiệu đặc biệt (toán học, tiền tệ, bản quyền...), mở từ phím
+     *  "=\<" ở trang 2. 2 phím góc trái-dưới (?123 và ABC) dùng lại đúng mã phím "SYM"/"ABC"
+     *  đã có sẵn nên bấm vào là quay thẳng về trang 2 / trang 1 tương ứng. */
+    private val symbols2Rows = listOf(
+        listOf("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "Δ"),
+        listOf("£", "€", "$", "¢", "^", "°", "=", "{", "}", "\\"),
+        listOf("SYM", "%", "©", "®", "™", "%", "±", "[", "]", "BACKSPACE"),
         listOf("ABC", "LT", "SPACE", "GT", "ENTER"),
     )
 
@@ -209,7 +219,11 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         if (currentPage == Page.LETTERS && NumberRowSettings.isEnabled(this)) {
             rows.add(numberRow)
         }
-        rows.addAll(if (currentPage == Page.LETTERS) lettersRows else symbolsRows)
+        rows.addAll(when (currentPage) {
+            Page.LETTERS -> lettersRows
+            Page.SYMBOLS -> symbolsRows
+            Page.SYMBOLS2 -> symbols2Rows
+        })
         letterKeyViews.clear()
         for (rowKeys in rows) {
             val rowView = LinearLayout(this).apply {
@@ -251,7 +265,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             }
         }
 
-        if (code.length == 1 && code[0].isLetter()) {
+        if (code.length == 1 && code[0].isLetter() && currentPage != Page.SYMBOLS2) {
+            // Trang 3 dùng vài ký tự Hy Lạp/toán học (π, Δ...) mà Kotlin cũng coi là "letter" -
+            // không đưa vào letterKeyViews để tránh bị hoa/thường hoá nhầm theo trạng thái Shift.
             letterKeyViews.add(keyView to code[0])
         }
         if (code == "SHIFT") {
@@ -271,6 +287,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         "PERIOD" -> "."
         "LT" -> "<"
         "GT" -> ">"
+        "PAGE3" -> "=\\<"
         "SYM" -> "?123"
         "ABC" -> "ABC"
         else -> if (code.length == 1 && capsMode != CapsMode.OFF) code.uppercase() else code
@@ -417,6 +434,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             "PERIOD" -> commitPunctuation(".")
             "LT" -> commitPunctuation("<")
             "GT" -> commitPunctuation(">")
+            "PAGE3" -> { currentPage = Page.SYMBOLS2; rebuildKeyRows() }
             "SYM" -> { currentPage = Page.SYMBOLS; rebuildKeyRows() }
             "ABC" -> { currentPage = Page.LETTERS; rebuildKeyRows() }
             else -> if (code.length == 1) handleLetterOrSymbolKey(code[0]) else Unit
@@ -436,12 +454,14 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private fun handleLetterOrSymbolKey(rawChar: Char) {
         val ic = currentInputConnection ?: return
         val locale = LocaleSettings.getCurrentLocale(this)
-        val isUpper = capsMode != CapsMode.OFF
-        val typedChar = if (rawChar.isLetter()) {
+        // Trang 3 (ký hiệu toán học/Hy Lạp) không áp dụng hoa/thường - π, Δ... phải gõ ra
+        // đúng như hiển thị dù Shift/Caps Lock đang bật từ trang chữ trước đó.
+        val isUpper = capsMode != CapsMode.OFF && currentPage != Page.SYMBOLS2
+        val typedChar = if (rawChar.isLetter() && currentPage != Page.SYMBOLS2) {
             if (isUpper) rawChar.uppercaseChar() else rawChar
         } else rawChar // số/ký tự đặc biệt không có khái niệm hoa/thường
 
-        if (rawChar.isLetter() && locale.usesTelex) {
+        if (rawChar.isLetter() && locale.usesTelex && currentPage != Page.SYMBOLS2) {
             val wordBefore = getCurrentWordBuffer()
             val transformed = TelexEngine.applyKey(wordBefore, typedChar)
             if (transformed != null) {
