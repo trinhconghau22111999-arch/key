@@ -171,7 +171,31 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         if (scanOverlay != null) closeScanOverlay()
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Không phải lúc nào hệ thống cũng tự gọi lại onCreateInputView() khi xoay màn hình -
+        // nếu bàn phím đang mở sẵn mà không dựng lại, chiều cao hàng phím (vốn phụ thuộc
+        // isLandscape() ở dp/keyRowHeightDp() bên dưới) sẽ vẫn giữ nguyên kích thước cũ của
+        // hướng trước đó. Chủ động dựng lại toàn bộ view ngay khi orientation đổi để bàn
+        // phím thu nhỏ lại đúng lúc vừa xoay ngang, không phải đợi đóng-mở lại bàn phím.
+        if (::rootContainer.isInitialized) {
+            setInputView(onCreateInputView())
+        }
+    }
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Float): Int = (value * resources.displayMetrics.density).toInt()
+
+    /** Màn hình xoay ngang có chiều cao khả dụng thấp hơn hẳn lúc đứng, nếu vẫn giữ nguyên
+     *  chiều cao từng hàng phím như lúc đứng thì bàn phím sẽ chiếm phần lớn màn hình, đúng
+     *  như phản ánh "khi nằm ngang bàn phím nó quá lớn". Thu nhỏ chiều cao hàng phím + hàng
+     *  tiện ích + cỡ chữ trên phím khi đang ở orientation LANDSCAPE để bàn phím gọn lại. */
+    private fun isLandscape(): Boolean =
+        resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+    private fun keyRowHeightDp(): Int = if (isLandscape()) 30 else 48
+    private fun utilityRowHeightDp(): Int = if (isLandscape()) 28 else 38
+    private fun keyTextSizeScale(): Float = if (isLandscape()) 0.8f else 1f
 
     // ============================== HÀNG TIỆN ÍCH TRÊN CÙNG ==============================
 
@@ -199,8 +223,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             text = label
             gravity = Gravity.CENTER
             setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
-            textSize = 14f
-            layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) }
+            textSize = 14f * keyTextSizeScale()
+            layoutParams = LinearLayout.LayoutParams(0, dp(utilityRowHeightDp()), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) }
             background = GradientDrawable().apply {
                 cornerRadius = dp(6).toFloat()
                 setColor(ThemeSettings.utilityButtonBackgroundColor(this@SmartKeyboardService))
@@ -277,7 +301,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         for ((rowIndex, rowKeys) in rows.withIndex()) {
             val rowView = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(keyRowHeightDp()))
             }
             val colCount = rowKeys.size
             val normY = if (rowCount > 1) rowIndex / (rowCount - 1).toFloat() else 0f
@@ -295,7 +319,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private fun buildNumpadBody(): View {
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48 * 4))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(keyRowHeightDp() * 4))
         }
 
         val numberColumn = LinearLayout(this).apply {
@@ -375,7 +399,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             // chữ theo ĐỘ DÀI MÃ PHÍM ("ENTER" dài 5 ký tự) nên bị xếp vào nhóm chữ nhỏ dù
             // NHÃN hiển thị chỉ có 1 ký tự icon, khiến icon trông rất bé. Giờ tính theo
             // đúng phím icon để phóng to hẳn cho dễ nhìn.
-            textSize = when {
+            textSize = keyTextSizeScale() * when {
                 // Icon nút Xoá ở trang 1 (chữ) và trang 2 (ký hiệu) thu nhỏ còn ~80% (22 -> 17.6)
                 // theo yêu cầu - riêng trang 3 và trang bàn phím số giữ nguyên cỡ cũ.
                 code == "BACKSPACE" && (currentPage == Page.LETTERS || currentPage == Page.SYMBOLS) -> 17.6f

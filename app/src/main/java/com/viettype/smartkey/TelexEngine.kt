@@ -312,9 +312,15 @@ object TelexEngine {
      *  1. Nguyên âm đặc biệt (ă â ê ô ơ ư) -> ưu tiên đặt vào đó.
      *  2. Chỉ 1 nguyên âm -> đặt vào đó.
      *  3. Có phụ âm cuối (closed syllable) -> đặt vào nguyên âm cuối cùng của cụm.
-     *  4. Mở (open syllable):
-     *       - "ia", "ua", "ưa" (kết thúc bằng 'a') -> đặt vào nguyên âm đầu cụm.
-     *       - Còn lại -> đặt vào nguyên âm cuối cụm.
+     *  4. Mở (open syllable), 2 nguyên âm thường (a e i o u y, không dấu phụ):
+     *       - "oa", "oe", "uy" -> nguyên âm ĐẦU ('o'/'u') chỉ là âm đệm (glide),
+     *         nguyên âm chính nằm ở SAU -> đặt thanh vào nguyên âm THỨ HAI.
+     *         (vd: "hoa"+f -> "hoà", "khoe"+r -> "khoẻ", "thuy"+r -> "thuỷ").
+     *       - Còn lại ("ai","ao","au","ay","eo","eu","ia","iu","oi","ua","ui","ưa"...)
+     *         -> nguyên âm ĐẦU mới là nguyên âm chính, nguyên âm sau chỉ là âm
+     *         cuối/bán nguyên âm -> đặt thanh vào nguyên âm ĐẦU cụm.
+     *         (vd: "cai"+s -> "cái" chứ không phải "caí";
+     *              "mau"+f -> "màu" chứ không phải "maù").
      *  5. 3+ nguyên âm -> đặt vào nguyên âm áp chót.
      */
     private fun pickToneTarget(word: String, vowelIndices: List<Int>): Int {
@@ -333,8 +339,12 @@ object TelexEngine {
             val pair = "$v0$v1"
             return when {
                 hasCoda -> vowelIndices[1]
-                pair == "ia" || pair == "ua" || pair == "ưa" -> vowelIndices[0]
-                else -> vowelIndices[1]
+                // Chỉ 3 cặp này có nguyên âm đầu là ÂM ĐỆM (o/u đứng trước nguyên âm
+                // chính) -> nguyên âm chính (và do đó thanh điệu) nằm ở vị trí thứ 2.
+                pair == "oa" || pair == "oe" || pair == "uy" -> vowelIndices[1]
+                // Mọi cặp mở còn lại (kể cả "ia"/"ua"/"ưa") đều có nguyên âm ĐẦU là
+                // nguyên âm chính -> đặt thanh vào đó.
+                else -> vowelIndices[0]
             }
         }
 
