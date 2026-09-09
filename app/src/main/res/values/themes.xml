@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VNSmartKey" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#B388FF</item>
+        <item name="colorPrimaryDark">#1A0F2E</item>
+        <item name="android:windowBackground">#1A0F2E</item>
+    </style>
+
+    <style name="Theme.Transparent" parent="Theme.AppCompat.Translucent">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+</resources>

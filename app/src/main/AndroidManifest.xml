@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="true" />
+
+    <!-- Android 11+ ẩn mặc định các app/thành phần khác khỏi tầm nhìn (package
+         visibility) - phải khai báo trước ở đây thì resolveActivity()/startActivity()
+         mới "thấy" được dịch vụ nhận dạng giọng nói có sẵn trên máy. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".KeyboardApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="VN Smart Key"
+        android:theme="@style/Theme.VNSmartKey">
+
+        <!-- Màn hình hướng dẫn bật bàn phím lần đầu - không phải launcher chính,
+             chỉ dùng khi cần dẫn người dùng qua bước cấp quyền Camera + mở đúng
+             trang Cài đặt hệ thống để bật bàn phím. -->
+        <activity
+            android:name=".OnboardingActivity"
+            android:exported="false" />
+
+        <!-- Activity trong suốt, chỉ để hiện hộp thoại xin quyền Camera hệ
+             thống - bắt buộc phải gắn với 1 Activity, Service (InputMethodService)
+             không tự hiện được hộp thoại xin quyền runtime. -->
+        <activity
+            android:name=".CameraPermissionRelay"
+            android:exported="false"
+            android:theme="@style/Theme.Transparent"
+            android:excludeFromRecents="true"
+            android:taskAffinity="com.viettype.smartkey.camerapermission" />
+
+        <!-- Tương tự CameraPermissionRelay, dùng riêng cho quyền Mic (nhập liệu
+             bằng giọng nói dùng SpeechRecognizer trực tiếp trong app, không uỷ
+             quyền hoàn toàn cho app trợ lý ảo khác). -->
+        <activity
+            android:name=".MicPermissionRelay"
+            android:exported="false"
+            android:theme="@style/Theme.Transparent"
+            android:excludeFromRecents="true"
+            android:taskAffinity="com.viettype.smartkey.micpermission" />
+
+        <!-- Màn hình Cài đặt chính - LAUNCHER (icon app trên màn hình chính mở
+             thẳng vào đây). -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Dịch vụ bàn phím (Input Method Service) -->
+        <service
+            android:name=".SmartKeyboardService"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true"
+            android:label="VN Smart Key">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+
+        <!-- Tạo Uri "content://" an toàn khi chia sẻ file xuất Excel ra app khác,
+             thay vì "file://" (bị hệ thống cấm từ Android 7.0 trở lên, gây crash
+             FileUriExposedException). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+</manifest>

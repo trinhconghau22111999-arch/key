@@ -1,0 +1,75 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.viettype.smartkey'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.viettype.smartkey"
+        minSdk 24
+        targetSdk 34
+        // Tăng theo giây thay vì cố định - đảm bảo mỗi bản build CI đều có
+        // versionCode lớn hơn bản trước, tránh Android từ chối "cập nhật"
+        // vì tưởng bản mới không mới hơn bản cũ.
+        def buildVersionCode = (System.currentTimeMillis() / 1000L).toInteger()
+        versionCode buildVersionCode
+        versionName "1.0"
+    }
+
+    // Dùng keystore CỐ ĐỊNH commit sẵn trong repo (không phải để phát hành
+    // Google Play) để mọi lần build trên máy ảo CI (luôn là máy mới hoàn
+    // toàn) đều ra CÙNG MỘT chữ ký - tránh lỗi "không cài đặt được, phải gỡ
+    // bản cũ" do mỗi lần build tự sinh 1 debug.keystore ngẫu nhiên khác nhau.
+    signingConfigs {
+        release {
+            storeFile file("../keystore/vnsmartkey-debug.keystore")
+            storePassword "vnsmartkey123"
+            keyAlias "vnsmartkey"
+            keyPassword "vnsmartkey123"
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.release
+        }
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+
+    // CameraX - dùng để mở camera quét mã QR/vạch ngay trong lớp phủ của
+    // chính bàn phím (không cần Activity camera riêng).
+    def camerax_version = "1.3.4"
+    implementation "androidx.camera:camera-core:$camerax_version"
+    implementation "androidx.camera:camera-camera2:$camerax_version"
+    implementation "androidx.camera:camera-lifecycle:$camerax_version"
+    implementation "androidx.camera:camera-view:$camerax_version"
+
+    // ML Kit Barcode Scanning - quét mã hoàn toàn offline trên máy.
+    implementation 'com.google.mlkit:barcode-scanning:17.3.0'
+}

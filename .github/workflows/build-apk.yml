@@ -1,0 +1,51 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cài JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cài Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Chấp nhận license SDK + cài đúng platform 34
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Cài Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build APK Debug
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Build APK Release (không minify, ký bằng keystore commit sẵn trong repo)
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Tìm file APK vừa build
+        run: find app/build/outputs -iname "*.apk"
+
+      - name: Tải APK lên làm Artifact của lần chạy này
+        uses: actions/upload-artifact@v4
+        with:
+          name: VNSmartKey-apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          if-no-files-found: error

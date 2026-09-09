@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Khung bàn phím -->
+    <path
+        android:fillColor="#B388FF"
+        android:pathData="M22,40 h64 a6,6 0 0 1 6,6 v22 a6,6 0 0 1 -6,6 h-64 a6,6 0 0 1 -6,-6 v-22 a6,6 0 0 1 6,-6 z" />
+    <!-- Các hàng phím (chấm trắng) -->
+    <path android:fillColor="#1A0F2E"
+        android:pathData="M28,48 h8 v6 h-8 z M40,48 h8 v6 h-8 z M52,48 h8 v6 h-8 z M64,48 h8 v6 h-8 z M76,48 h8 v6 h-8 z" />
+    <path android:fillColor="#1A0F2E"
+        android:pathData="M32,60 h44 v6 h-44 z" />
+    <!-- Góc quét QR (trên phải) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M70,16 h18 a4,4 0 0 1 4,4 v18 h-6 v-16 h-16 z" />
+</vector>
