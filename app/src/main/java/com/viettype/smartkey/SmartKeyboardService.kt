@@ -926,6 +926,12 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         }
 
         currentInputConnection?.commitText(content, 1)
+        // Yêu cầu: sau mỗi mã quét ra, tự động xuống dòng bằng ENTER CỨNG (gửi thẳng
+        // KEYCODE_ENTER qua sendKeyEvent - giống hệt phím Enter thường của bàn phím),
+        // KHÔNG dùng performEditorAction (vốn có thể bị ô nhập diễn giải thành "Xong"/
+        // "Tìm kiếm"... tuỳ IME option của app, không phải xuống dòng thật).
+        currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
+        currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
         ScanHistoryStore.addEntry(this, content)
         VibrationSettings.tick(this)
         // KHÔNG đóng khung quét ở đây - quét liên tục, người dùng tự bấm "Huỷ" khi xong.
