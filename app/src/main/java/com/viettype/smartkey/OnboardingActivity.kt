@@ -27,14 +27,14 @@ class OnboardingActivity : AppCompatActivity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "Bật VN Smart Key"
+            text = "Bật QR Keyboard gaming 2"
             textSize = 24f
             setTextColor(Color.WHITE)
         })
 
         root.addView(TextView(this).apply {
             text = "\nBước 1: Bật bàn phím trong danh sách bàn phím hệ thống.\n" +
-                "Bước 2: Chọn VN Smart Key làm bàn phím đang gõ.\n"
+                "Bước 2: Chọn QR Keyboard gaming 2 làm bàn phím đang gõ.\n"
             textSize = 15f
             setTextColor(Color.LTGRAY)
         })

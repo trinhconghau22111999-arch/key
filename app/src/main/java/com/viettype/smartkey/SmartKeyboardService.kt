@@ -122,6 +122,21 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         return rootContainer
     }
 
+    /** Bấm nút Back của hệ thống (hàng phím đa nhiệm back/home/đa nhiệm dưới màn hình) trong
+     *  lúc đang mở khung quét QR: coi như "Huỷ" - đóng camera + khung quét, ĐỒNG THỜI tắt
+     *  hẳn bàn phím luôn (không chỉ đóng khung quét mà bàn phím vẫn còn mở). Lần sau người
+     *  dùng mở bàn phím lại thì tự về Trang 1 như bình thường (đã có sẵn ở onStartInputView -
+     *  currentPage luôn reset về Page.LETTERS mỗi lần mở lại). Chỉ can thiệp khi đang quét;
+     *  Back bình thường (không quét) vẫn để hệ thống xử lý như cũ. */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_BACK && scanOverlay != null) {
+            closeScanOverlay()
+            requestHideSelf(0)
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED

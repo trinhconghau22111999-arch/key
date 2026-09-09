@@ -49,7 +49,8 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun rebuildAll() {
         contentBox.removeAllViews()
-        contentBox.addView(sectionTitle("VN Smart Key"))
+        contentBox.addView(sectionTitle("QR Keyboard gaming 2"))
+        contentBox.addView(versionInfoText())
         contentBox.addView(buildKeyboardStatusSection())
         contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Ngôn ngữ"))
@@ -495,6 +496,12 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     // ============================== TIỆN ÍCH DỰNG GIAO DIỆN ==============================
+
+    /** Hiện "Phiên bản x.x (mã yyy)" ngay dưới tiêu đề - để người dùng tự xác nhận
+     *  app đã CẬP NHẬT đúng bản mới sau khi cài đè APK mới lên (không gỡ bản cũ). */
+    private fun versionInfoText(): TextView = bodyText(
+        "Phiên bản ${BuildConfig.VERSION_NAME} (mã ${BuildConfig.VERSION_CODE})"
+    )
 
     private fun sectionTitle(text: String): TextView = TextView(this).apply {
         this.text = text

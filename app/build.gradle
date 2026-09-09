@@ -16,7 +16,7 @@ android {
         // vì tưởng bản mới không mới hơn bản cũ.
         def buildVersionCode = (System.currentTimeMillis() / 1000L).toInteger()
         versionCode buildVersionCode
-        versionName "1.0"
+        versionName "2.0"
     }
 
     // Dùng keystore CỐ ĐỊNH commit sẵn trong repo (không phải để phát hành
