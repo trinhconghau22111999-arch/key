@@ -127,11 +127,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         autoCapPending = true
         capsMode = CapsMode.OFF
+        currentPage = Page.LETTERS // reset về trang chữ mỗi lần bàn phím mở lại
         // Người dùng có thể vừa đổi màu viền/nền sáng-tối/hiệu ứng RGB ở màn Cài đặt rồi
         // quay lại gõ ngay - vẽ lại toàn bộ theo cấu hình mới nhất, không cần khởi động lại.
+        // refreshTheme() -> rebuildKeyRows() -> startLedAnimationIfNeeded() đã được gọi bên trong,
+        // không cần gọi thêm startLedAnimationIfNeeded() ở đây tránh tạo animator kép.
         refreshTheme()
         refreshLetterCaseDisplay()
-        startLedAnimationIfNeeded()
     }
 
     /** Vẽ lại nền khối bàn phím + hàng tiện ích + toàn bộ phím theo màu viền/nền sáng-tối
@@ -257,6 +259,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             // không dùng chung được vòng lặp hàng-đều-cột như các trang khác - tự dựng riêng.
             rowsHost.addView(buildNumpadBody())
             refreshLetterCaseDisplay()
+            // Sau khi dựng xong phím mới, restart animator để nó giữ đúng ledKeySlots mới.
+            // Không dùng post() - gọi thẳng vì ledKeySlots đã đầy đủ tại đây.
+            startLedAnimationIfNeeded()
             return
         }
         val rows = mutableListOf<List<String>>()
@@ -286,6 +291,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             rowsHost.addView(rowView)
         }
         refreshLetterCaseDisplay()
+        // Sau khi dựng xong toàn bộ phím (ledKeySlots đã đầy đủ), restart animator.
+        // Nếu không restart, animator cũ vẫn chạy nhưng iterate trên ledKeySlots đã bị
+        // clear() -> list rỗng -> không vẽ viền nào -> viền lúc có lúc không khi đổi trang.
+        startLedAnimationIfNeeded()
     }
     /** Trang bàn phím số (123): cột số bên trái (1-9 + hàng toán tử) chiếm 3 phần bề rộng,
      *  cột phải 1 phần gồm ABC / Xoá / Enter - riêng Enter cao gấp đôi, chiếm luôn 2 hàng
