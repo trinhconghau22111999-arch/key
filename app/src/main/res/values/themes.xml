@@ -6,7 +6,7 @@
         <item name="android:windowBackground">#1A0F2E</item>
     </style>
 
-    <style name="Theme.Transparent" parent="Theme.AppCompat.Translucent">
+    <style name="Theme.Transparent" parent="Theme.AppCompat">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
