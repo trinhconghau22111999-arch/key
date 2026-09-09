@@ -465,6 +465,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 MotionEvent.ACTION_DOWN -> {
                     longPressTriggered = false
                     v.alpha = 0.6f
+                    // Tạo bóng thật (Material elevation) cho phím trong lúc đang nhấn giữ, nếu
+                    // người dùng đã bật ở Cài đặt (mặc định TẮT). Bóng tự bám theo đúng hình
+                    // bo góc của keyBackground (GradientDrawable) nhờ ViewOutlineProvider.BACKGROUND
+                    // mặc định của View - không cần khai báo outline riêng.
+                    if (KeyShadowSettings.isEnabled(this@SmartKeyboardService)) {
+                        v.elevation = dp(6).toFloat()
+                    }
                     // Rung phản hồi NGAY LÚC NGÓN TAY CHẠM XUỐNG, không đợi ký tự thật sự
                     // được chèn vào ô nhập (trước đây rung ở cuối, sau khi xử lý Telex/commit
                     // xong nên cảm giác "rung trễ" dù chỉ vài chục mili-giây). Trừ BACKSPACE vì
@@ -503,6 +510,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 }
                 MotionEvent.ACTION_UP -> {
                     v.alpha = 1f
+                    v.elevation = 0f
                     repeatRunnable?.let { mainHandler.removeCallbacks(it) }
                     longPressRunnable?.let { mainHandler.removeCallbacks(it) }
                     if (longPressTriggered) {
@@ -516,6 +524,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     v.alpha = 1f
+                    v.elevation = 0f
                     repeatRunnable?.let { mainHandler.removeCallbacks(it) }
                     longPressRunnable?.let { mainHandler.removeCallbacks(it) }
                     popupView?.let { rootContainer.removeView(it) }

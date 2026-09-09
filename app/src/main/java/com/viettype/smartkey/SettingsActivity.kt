@@ -142,6 +142,23 @@ class SettingsActivity : AppCompatActivity() {
         })
         box.addView(row)
         box.addView(bodyText("Hiện thêm 1 hàng số 0-9 ở trên cùng, dành cho trang gõ chữ đầu tiên."))
+
+        val shadowRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 20, 0, 0)
+        }
+        shadowRow.addView(TextView(this).apply {
+            text = "Tạo bóng khi gõ phím"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        shadowRow.addView(Switch(this).apply {
+            isChecked = KeyShadowSettings.isEnabled(this@SettingsActivity)
+            setOnCheckedChangeListener { _, isChecked -> KeyShadowSettings.setEnabled(this@SettingsActivity, isChecked) }
+        })
+        box.addView(shadowRow)
+        box.addView(bodyText("Phím nổi lên + đổ bóng quanh viền trong lúc đang nhấn giữ, tắt bóng ngay khi nhả tay."))
         return box
     }
 
