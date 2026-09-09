@@ -186,6 +186,45 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     private fun dp(value: Float): Int = (value * resources.displayMetrics.density).toInt()
 
+    /** Các phím chức năng/điều khiển KHÔNG hiện "bong bóng chữ" khi nhấn (Shift, Backspace,
+     *  Space, Enter, chuyển trang ?123/ABC...) vì phóng to ký tự cho các phím này không có
+     *  ý nghĩa hoặc nhãn quá dài để hiện gọn trong bong bóng. */
+    private val keyBubbleExcludedCodes = setOf("SHIFT", "BACKSPACE", "SPACE", "ENTER", "SYM", "ABC", "PAGE3")
+
+    /** Hiện bong bóng phóng to ký tự đang được nhấn, nổi ngay phía trên phím - kiểu hiệu ứng
+     *  "key preview" quen thuộc của hầu hết bàn phím ảo, giúp người dùng thấy rõ mình vừa
+     *  chạm đúng phím nào trước khi nhả tay. */
+    private fun showKeyBubble(anchorKey: View, label: String): View {
+        val location = IntArray(2)
+        anchorKey.getLocationInWindow(location)
+        val rootLocation = IntArray(2)
+        rootContainer.getLocationInWindow(rootLocation)
+
+        val bubble = TextView(this).apply {
+            text = label
+            textSize = 26f
+            gravity = Gravity.CENTER
+            setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(ThemeSettings.keyBackgroundColor(this@SmartKeyboardService))
+            }
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            minWidth = anchorKey.width
+        }
+
+        val params = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+            leftMargin = location[0] - rootLocation[0] - (anchorKey.width / 4)
+            topMargin = location[1] - rootLocation[1] - dp(56)
+        }
+        rootContainer.addView(bubble, params)
+        return bubble
+    }
+
+    private fun removeKeyBubble(bubble: View?) {
+        bubble?.let { rootContainer.removeView(it) }
+    }
+
     /** Màn hình xoay ngang có chiều cao khả dụng thấp hơn hẳn lúc đứng, nếu vẫn giữ nguyên
      *  chiều cao từng hàng phím như lúc đứng thì bàn phím sẽ chiếm phần lớn màn hình, đúng
      *  như phản ánh "khi nằm ngang bàn phím nó quá lớn". Thu nhỏ chiều cao hàng phím + hàng
@@ -459,18 +498,18 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         var popupView: LinearLayout? = null
         var popupChars: List<Char> = emptyList()
         var selectedVariantIndex = 0
+        var keyBubble: View? = null
 
         keyView.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     longPressTriggered = false
                     v.alpha = 0.6f
-                    // Tạo bóng thật (Material elevation) cho phím trong lúc đang nhấn giữ, nếu
-                    // người dùng đã bật ở Cài đặt (mặc định TẮT). Bóng tự bám theo đúng hình
-                    // bo góc của keyBackground (GradientDrawable) nhờ ViewOutlineProvider.BACKGROUND
-                    // mặc định của View - không cần khai báo outline riêng.
-                    if (KeyShadowSettings.isEnabled(this@SmartKeyboardService)) {
-                        v.elevation = dp(6).toFloat()
+                    // Hiện "bong bóng chữ" (bubble phóng to ký tự, nổi phía trên phím) trong lúc
+                    // đang nhấn giữ, nếu người dùng đã bật ở Cài đặt (mặc định TẮT). Bong bóng
+                    // biến mất ngay khi nhả tay (xem ACTION_UP/ACTION_CANCEL bên dưới).
+                    if (KeyBubbleSettings.isEnabled(this@SmartKeyboardService) && code !in keyBubbleExcludedCodes) {
+                        keyBubble = showKeyBubble(v, displayLabelFor(code))
                     }
                     // Rung phản hồi NGAY LÚC NGÓN TAY CHẠM XUỐNG, không đợi ký tự thật sự
                     // được chèn vào ô nhập (trước đây rung ở cuối, sau khi xử lý Telex/commit
@@ -490,6 +529,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     } else if (code.length == 1 && longPressVariants.containsKey(code[0].lowercaseChar())) {
                         longPressRunnable = Runnable {
                             longPressTriggered = true
+                            // Ẩn bong bóng chữ để nhường chỗ cho popup ký tự phụ (áp dụng cho các
+                            // phím có dấu như a, e, o...), tránh 2 popup chồng lên nhau.
+                            keyBubble?.let { removeKeyBubble(it) }
+                            keyBubble = null
                             popupChars = longPressVariants.getValue(code[0].lowercaseChar()).toList()
                             selectedVariantIndex = 0
                             popupView = showAccentPopup(v, popupChars, 0)
@@ -510,7 +553,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 }
                 MotionEvent.ACTION_UP -> {
                     v.alpha = 1f
-                    v.elevation = 0f
+                    keyBubble?.let { removeKeyBubble(it) }
+                    keyBubble = null
                     repeatRunnable?.let { mainHandler.removeCallbacks(it) }
                     longPressRunnable?.let { mainHandler.removeCallbacks(it) }
                     if (longPressTriggered) {
@@ -524,7 +568,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     v.alpha = 1f
-                    v.elevation = 0f
+                    keyBubble?.let { removeKeyBubble(it) }
+                    keyBubble = null
                     repeatRunnable?.let { mainHandler.removeCallbacks(it) }
                     longPressRunnable?.let { mainHandler.removeCallbacks(it) }
                     popupView?.let { rootContainer.removeView(it) }
