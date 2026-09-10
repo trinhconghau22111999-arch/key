@@ -15,6 +15,7 @@ import android.speech.SpeechRecognizer
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -226,6 +227,14 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
      *  ý nghĩa hoặc nhãn quá dài để hiện gọn trong bong bóng. */
     private val keyBubbleExcludedCodes = setOf("SHIFT", "BACKSPACE", "SPACE", "ENTER", "SYM", "ABC", "PAGE3")
 
+    // TOI UU (nguoi dung phan anh: "luc nhanh luc cham"): View bong bong chu
+    // DUNG CHUNG, tao 1 LAN DUY NHAT roi TAI SU DUNG cho moi lan cham phim
+    // thay vi truoc day moi lan cham phim lai TAO MOI hoan toan 1 TextView +
+    // 1 GradientDrawable (2 doi tuong MOI moi lan, hang chuc/hang tram lan
+    // trong 1 phien go phim) - gop phan gay ap luc GC lien tuc tren luong
+    // chinh, cung 1 nguyen nhan voi hieu ung LED (xem [ledColorHsvScratch]).
+    private var sharedKeyBubbleView: TextView? = null
+
     /** Hiện bong bóng phóng to ký tự đang được nhấn, nổi ngay phía trên phím - kiểu hiệu ứng
      *  "key preview" quen thuộc của hầu hết bàn phím ảo, giúp người dùng thấy rõ mình vừa
      *  chạm đúng phím nào trước khi nhả tay. */
@@ -235,18 +244,22 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         val rootLocation = IntArray(2)
         rootContainer.getLocationInWindow(rootLocation)
 
-        val bubble = TextView(this).apply {
-            text = label
+        // TOI UU: lay lai View CU (neu con) thay vi tao moi - chi can cap
+        // nhat lai text/mau/kich thuoc cho khop phim dang cham lan nay. Neu
+        // View cu dang con gan o 1 container khac (hiem, do 1 nhip cham cu
+        // chua kip go het), go no ra truoc.
+        val bubble = sharedKeyBubbleView ?: TextView(this).apply {
             textSize = 26f
             gravity = Gravity.CENTER
-            setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(10).toFloat()
-                setColor(ThemeSettings.keyBackgroundColor(this@SmartKeyboardService))
-            }
+            background = GradientDrawable().apply { cornerRadius = dp(10).toFloat() }
             setPadding(dp(14), dp(10), dp(14), dp(10))
-            minWidth = anchorKey.width
+            sharedKeyBubbleView = this
         }
+        (bubble.parent as? ViewGroup)?.removeView(bubble)
+        bubble.text = label
+        bubble.setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
+        (bubble.background as GradientDrawable).setColor(ThemeSettings.keyBackgroundColor(this@SmartKeyboardService))
+        bubble.minWidth = anchorKey.width
 
         // Đo trước kích thước THẬT của bong bóng (WRAP_CONTENT, có thể rộng hơn hẳn phím do
         // padding 2 bên) rồi mới tính lề trái để CĂN GIỮA chính xác theo tâm phím - trước đây
@@ -844,6 +857,18 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     /** Độ dày viền phím lúc hiệu ứng RGB đang chạy. */
     private val ledBorderWidthPx get() = dp(2)
 
+    // TOI UU (nguoi dung phan anh: "co luc bam phan hoi nhanh, co luc cham re
+    // re" - do KHONG DEU): mang HSV dung CHUNG, tai su dung MOI KHUNG HINH
+    // thay vi cap phat MOI (floatArrayOf(...)) trong colorAtPhase() - truoc
+    // day MOI LAN goi ham do (moi PHIM, moi KHUNG HINH, ~40 phim x 60
+    // lan/giay = hang nghin lan cap phat MOI GIAY khi hieu ung LED dang
+    // chay) deu tao ra 1 FloatArray(3) MOI, gay ap luc don rac (GC) lien
+    // tuc tren luong chinh - thinh thoang trung dung luc nguoi dung cham
+    // phim se cam thay "khung" 1 nhip. Mang nay CHi tao 1 LAN DUY NHAT, moi
+    // lan goi chi GHI DE gia tri vao, khong cap phat gi them.
+    private val ledColorHsvScratch = FloatArray(3)
+    private var lastLedFrameAt = 0L
+
     private fun startLedAnimationIfNeeded() {
         ledAnimator?.cancel()
 
@@ -868,10 +893,21 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener { animator ->
+                // TOI UU: gioi han toi da ~30 khung hinh/giay cho hieu ung
+                // trang tri nay (thay vi mac dinh ~60fps cua ValueAnimator) -
+                // mat nguoi hau nhu KHONG phan biet duoc su khac biet o 1
+                // hieu ung "chay mau" muot, nhung GIAM DUOC MOT NUA toan bo
+                // khoi luong tinh toan/redraw tren luong chinh mot cach lien
+                // tuc, danh nhieu "khoang tho" hon cho luong chinh xu ly
+                // cham/tha ngon tay dung luc, giam han tan suat bi "khung".
+                val now = System.currentTimeMillis()
+                if (now - lastLedFrameAt < 28) return@addUpdateListener
+                lastLedFrameAt = now
+
                 val globalT = animator.animatedValue as Float
 
                 // Dải đèn mỏng trên cùng - hiển thị đúng màu đang "chạy" tới ngay lúc này (pha 0).
-                ledStripView.setBackgroundColor(colorAtPhase(globalT, colorMode, singleHsv))
+                ledStripView.setBackgroundColor(colorAtPhase(globalT, colorMode, singleHsv, ledColorHsvScratch))
 
                 // Viền từng phím "chạy" theo đúng hướng đã chọn - mỗi phím trễ pha theo vị trí
                 // của nó trong lưới (trái->phải dùng normX, trên->dưới dùng normY, chéo góc dùng
@@ -883,7 +919,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                         LedEffectSettings.Direction.DIAGONAL -> (slot.normX + slot.normY) / 2f
                     }
                     val phase = ((globalT + posAlong) % 1f + 1f) % 1f
-                    slot.drawable.setStroke(ledBorderWidthPx, colorAtPhase(phase, colorMode, singleHsv))
+                    slot.drawable.setStroke(ledBorderWidthPx, colorAtPhase(phase, colorMode, singleHsv, ledColorHsvScratch))
                 }
             }
             start()
@@ -892,12 +928,20 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     /** Màu tại 1 pha (0..1) của hiệu ứng - "Nhiều màu" quét cầu vồng đủ 360 độ hue (giữ nguyên
      *  bảng màu gốc); "1 màu" dao động giữa phiên bản SÁNG HƠN và ĐẬM HƠN của màu đang chọn,
-     *  tạo cảm giác "thở" rõ rệt hơn so với chỉ nhấp nháy độ sáng đơn thuần. */
-    private fun colorAtPhase(phase: Float, colorMode: LedEffectSettings.ColorMode, singleHsv: FloatArray): Int {
+     *  tạo cảm giác "thở" rõ rệt hơn so với chỉ nhấp nháy độ sáng đơn thuần.
+     *
+     *  [scratch] TOI UU: mang FloatArray(3) DUNG CHUNG, tai su dung MOI LAN goi thay vi cap
+     *  phat moi qua floatArrayOf(...) - ham nay bi goi RAT NHIEU LAN MOI GIAY (moi phim, moi
+     *  khung hinh) nen giam cap phat o day co tac dong ro ret den do muot tong the. */
+    private fun colorAtPhase(phase: Float, colorMode: LedEffectSettings.ColorMode, singleHsv: FloatArray, scratch: FloatArray): Int {
         return when (colorMode) {
-            LedEffectSettings.ColorMode.MULTI_COLOR ->
+            LedEffectSettings.ColorMode.MULTI_COLOR -> {
                 // Giữ nguyên bảng màu cầu vồng như cũ
-                Color.HSVToColor(floatArrayOf(phase * 360f, 0.85f, 1f))
+                scratch[0] = phase * 360f
+                scratch[1] = 0.85f
+                scratch[2] = 1f
+                Color.HSVToColor(scratch)
+            }
             LedEffectSettings.ColorMode.SINGLE_COLOR -> {
                 // wave: 0..1 theo dạng sóng cos (đỉnh=1 tại phase=0, đáy=0 tại phase=0.5)
                 val wave = ((kotlin.math.cos(phase * 2 * Math.PI) + 1) / 2).toFloat()
@@ -907,7 +951,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 val valPeak = singleHsv[2]
                 val valDark = (singleHsv[2] * 0.20f).coerceIn(0.05f, 1f)
                 val value = valDark + (valPeak - valDark) * wave
-                Color.HSVToColor(floatArrayOf(singleHsv[0], singleHsv[1], value))
+                scratch[0] = singleHsv[0]
+                scratch[1] = singleHsv[1]
+                scratch[2] = value
+                Color.HSVToColor(scratch)
             }
         }
     }
