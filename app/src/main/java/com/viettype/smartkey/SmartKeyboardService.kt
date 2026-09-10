@@ -739,7 +739,17 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private fun handleBackspace() {
         val ic = currentInputConnection ?: return
-        ic.deleteSurroundingText(1, 0)
+        // Nếu đang có VÙNG CHỌN (bôi đen 1 khối chữ): deleteSurroundingText(1, 0) KHÔNG đụng
+        // tới phần đang chọn (theo đúng tài liệu InputConnection - nó chỉ xoá ký tự nằm TRƯỚC
+        // vùng chọn, còn khối đang bôi đen giữ nguyên) -> trước đây gây cảm giác "quét khối
+        // xoá không được". Có selection thì phải xoá bằng commitText("", 1) - thay thế toàn bộ
+        // phần đang chọn bằng chuỗi rỗng, đúng hành vi Backspace tiêu chuẩn của các bàn phím khác.
+        val hasSelection = !ic.getSelectedText(0).isNullOrEmpty()
+        if (hasSelection) {
+            ic.commitText("", 1)
+        } else {
+            ic.deleteSurroundingText(1, 0)
+        }
         // BACKSPACE vẫn tự rung ở đây (không rung ở ACTION_DOWN) vì hàm này còn được gọi lặp
         // lại liên tục lúc giữ tay để xoá nhanh - mỗi lần xoá cần rung riêng để phản hồi đúng
         // từng ký tự đã mất, không chỉ 1 cái rung duy nhất lúc vừa chạm xuống.
