@@ -194,12 +194,19 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         // hướng trước đó. Chủ động dựng lại toàn bộ view ngay khi orientation đổi để bàn
         // phím thu nhỏ lại đúng lúc vừa xoay ngang, không phải đợi đóng-mở lại bàn phím.
         if (::rootContainer.isInitialized) {
+            // onCreateInputView() bên dưới dựng HẲN 1 rootContainer mới - khung quét QR/ghi âm
+            // đang mở (nếu có) đang là view con của rootContainer CŨ nên sẽ bị "mồ côi": không
+            // ai còn nhìn thấy nữa nhưng camera/mic thật vẫn chạy ngầm phía sau (không có cách
+            // nào bấm "Huỷ" vì nút đó cũng đã mất theo). Đóng hẳn 2 khung này TRƯỚC khi dựng lại
+            // UI để giải phóng camera/mic đúng lúc, người dùng tự mở quét/ghi âm lại sau khi
+            // xoay xong nếu cần.
+            if (scanOverlay != null) closeScanOverlay()
+            if (micOverlay != null) closeMicOverlay()
             setInputView(onCreateInputView())
         }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-    private fun dp(value: Float): Int = (value * resources.displayMetrics.density).toInt()
 
     /** Các phím chức năng/điều khiển KHÔNG hiện "bong bóng chữ" khi nhấn (Shift, Backspace,
      *  Space, Enter, chuyển trang ?123/ABC...) vì phóng to ký tự cho các phím này không có
@@ -314,7 +321,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private val symbols2Rows = listOf(
         listOf("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "Δ"),
         listOf("£", "€", "$", "¢", "^", "°", "=", "{", "}", "\\"),
-        listOf("SYM", "%", "©", "®", "™", "%", "±", "[", "]", "BACKSPACE"),
+        listOf("SYM", "%", "©", "®", "™", "‰", "±", "[", "]", "BACKSPACE"),
         listOf("ABC", "LT", "SPACE", "GT", "ENTER"),
     )
 
