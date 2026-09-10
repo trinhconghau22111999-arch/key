@@ -79,8 +79,19 @@ object TelexEngine {
         }
 
         // ── z = xoá thanh (ngang) ────────────────────────────────────────────
+        // Nếu từ có thanh điệu -> z xoá thanh đó (về thanh ngang). Nếu từ KHÔNG có
+        // thanh nào để xoá (hoặc không có nguyên âm) -> applyToneToWord() trả về y
+        // hệt wordBefore (không đổi gì) -> trước đây bị coi như "đã xử lý xong" nên
+        // chữ 'z' biến mất không dấu vết (gõ mà không thấy chữ nào ra). Giờ trong
+        // trường hợp đó tự chèn thẳng ký tự 'z' vào cuối từ, giống hệt gõ 1 chữ cái
+        // thường (không có Telex nào cần escape ở đây vì z không dùng để tạo dấu).
         if (keyLower == 'z') {
-            return applyToneToWord(wordBefore, Tone.NONE) ?: wordBefore
+            val stripped = applyToneToWord(wordBefore, Tone.NONE)
+            return if (stripped != null && stripped != wordBefore) {
+                stripped
+            } else {
+                wordBefore + rawKey
+            }
         }
 
         // ── aa -> â, ee -> ê, oo -> ô, dd -> đ ──────────────────────────────
