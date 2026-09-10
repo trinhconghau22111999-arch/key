@@ -248,8 +248,17 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             minWidth = anchorKey.width
         }
 
+        // Đo trước kích thước THẬT của bong bóng (WRAP_CONTENT, có thể rộng hơn hẳn phím do
+        // padding 2 bên) rồi mới tính lề trái để CĂN GIỮA chính xác theo tâm phím - trước đây
+        // trừ cứng 1/4 bề rộng phím nên bong bóng luôn bị lệch trái, lệch càng rõ với phím có
+        // nhãn dài (bong bóng rộng ra nhưng lề trái không tính lại theo bề rộng mới đó).
+        val widthSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        val heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        bubble.measure(widthSpec, heightSpec)
+        val bubbleWidth = bubble.measuredWidth
+
         val params = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
-            leftMargin = location[0] - rootLocation[0] - (anchorKey.width / 4)
+            leftMargin = location[0] - rootLocation[0] + (anchorKey.width - bubbleWidth) / 2
             topMargin = location[1] - rootLocation[1] - dp(56)
         }
         rootContainer.addView(bubble, params)
