@@ -142,12 +142,25 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         autoCapPending = true
         capsMode = CapsMode.OFF
-        currentPage = Page.LETTERS // reset về trang chữ mỗi lần bàn phím mở lại
+        // Ô nhập mã PIN/số điện thoại/số (inputType lớp CLASS_NUMBER, CLASS_PHONE,
+        // hoặc CLASS_DATETIME - ví dụ ô nhập mã PIN khoá màn hình, mã OTP, SĐT...) thì tự
+        // mở thẳng Trang bàn phím số (NUMPAD) luôn, đỡ phải tự bấm nút "123" mỗi lần.
+        // Các ô nhập bình thường khác vẫn về Trang chữ (LETTERS) như cũ.
+        currentPage = if (isNumericInputField(info)) Page.NUMPAD else Page.LETTERS
         // Người dùng có thể vừa đổi màu viền/nền sáng-tối/hiệu ứng RGB ở màn Cài đặt rồi
         // quay lại gõ ngay - vẽ lại toàn bộ theo cấu hình mới nhất, không cần khởi động lại.
         refreshTheme()
         refreshLetterCaseDisplay()
         startLedAnimationIfNeeded()
+    }
+
+    /** Ô nhập có phải kiểu chỉ nhận số không (mã PIN, mã OTP, số điện thoại, ngày giờ...)? */
+    private fun isNumericInputField(info: android.view.inputmethod.EditorInfo?): Boolean {
+        val inputType = info?.inputType ?: return false
+        val classType = inputType and android.text.InputType.TYPE_MASK_CLASS
+        return classType == android.text.InputType.TYPE_CLASS_NUMBER ||
+            classType == android.text.InputType.TYPE_CLASS_PHONE ||
+            classType == android.text.InputType.TYPE_CLASS_DATETIME
     }
 
     /** Vẽ lại nền khối bàn phím + hàng tiện ích + toàn bộ phím theo màu viền/nền sáng-tối
