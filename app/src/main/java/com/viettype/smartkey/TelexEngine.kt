@@ -98,6 +98,18 @@ object TelexEngine {
         if (keyLower in "aeod") {
             val result = applyDoubleChar(wordBefore, keyLower, keyIsUpper)
             if (result != null) return result
+            // SUA LOI (nguoi dung phan anh: go "naua" khong ra "nâu"): TRUOC
+            // DAY applyDoubleChar() CHi nhan doi khi 2 chu lien tiep NGAY
+            // SAT nhau (vd "naa"). Nhung "nâu" go telex thuong la "n,a,u,a" -
+            // chu 'a' thu 2 KHONG dung ngay sau chu 'a' dau (co 'u' xen
+            // giua) vi nguoi go thuong go xong ca cum nguyen am "au" roi moi
+            // bam THEM 'a' de "nhan doi nguoc". Ap dung CHi cho a/e/o (khong
+            // ap dung cho 'd' vi đ luon la chu dau am tiet, khong co tinh
+            // huong go rieng le nhu vay) - xem [transformLastVowelWithDoubleLetter].
+            if (keyLower in "aeo") {
+                val deferred = transformLastVowelWithDoubleLetter(wordBefore, keyLower, keyIsUpper)
+                if (deferred != null) return deferred
+            }
         }
 
         // ── aw -> ă, ow -> ơ, uw/w -> ư ; và escape double-w ────────────────
@@ -193,6 +205,37 @@ object TelexEngine {
         return word.dropLast(1) + finalChar
     }
 
+    /**
+     * Tìm ký tự GẦN CUỐI TỪ nhất có gốc (bỏ dấu, chữ thường) TRÙNG với
+     * [keyLower] ('a'/'e'/'o') - có thể có ký tự khác (nguyên âm hoặc phụ âm)
+     * xen giữa nó và cuối từ, KHÔNG cần liền kề - rồi biến đổi ký tự đó
+     * (a->â, e->ê, o->ô), KHÔNG nối thêm ký tự vừa gõ (giống hệt cách nhân
+     * đôi liền kề hoạt động: "aa" -> 1 chữ "â" duy nhất).
+     *
+     * Dùng cho trường hợp gõ nhân đôi KHÔNG liền kề, ví dụ "nau" + 'a' (lần
+     * 2) -> "nâu" (chữ 'a' đầu tiên được biến đổi, dù có 'u' xen giữa).
+     *
+     * Chỉ khớp đúng CHỮ GỐC chưa biến đổi (vd 'a' thường) - KHÔNG khớp với
+     * chính dạng đã có móc/mũ (â/ê/ô), tránh biến đổi lặp lại ký tự đã xong.
+     */
+    private fun transformLastVowelWithDoubleLetter(word: String, keyLower: Char, keyIsUpper: Boolean): String? {
+        val replacement: Char = when (keyLower) {
+            'a' -> 'â'; 'e' -> 'ê'; 'o' -> 'ô'
+            else -> return null
+        }
+        for (i in word.indices.reversed()) {
+            val c    = word[i]
+            val base = stripTone(c).lowercaseChar()
+            if (base == keyLower) {
+                val cased = if (c.isUpperCase() || keyIsUpper) replacement.uppercaseChar() else replacement
+                val tone  = extractTone(c)
+                val fin   = if (tone != Tone.NONE) applyToneToChar(cased, tone) else cased
+                return word.substring(0, i) + fin + word.substring(i + 1)
+            }
+        }
+        return null
+    }
+
     // =========================================================================
     //  Xử lý w
     // =========================================================================
@@ -230,11 +273,31 @@ object TelexEngine {
         if (lastBase == 'o') {
             val rep = if (lastChar.isUpperCase()) 'Ơ' else 'ơ'
             val fin = if (existingTone != Tone.NONE) applyToneToChar(rep, existingTone) else rep
-            return word.dropLast(1) + fin
+            val chars = word.toCharArray()
+            chars[chars.size - 1] = fin
+            // SUA LOI (nguoi dung phan anh: "phuongw" ra "phuơng" thay vi
+            // "phương"): cum "uo" bien thanh "ươ" phai doi CA 2 chu (u->ư VA
+            // o->ơ) chu khong chi rieng o->ơ - xem [alsoConvertPrecedingUIfNeeded].
+            alsoConvertPrecedingUIfNeeded(chars, chars.size - 1)
+            return String(chars)
         }
 
         // uw -> ư (và nhungw -> nhưng: 'u' không phải ký tự cuối nhưng cuối là phụ âm)
         if (lastBase == 'u') {
+            val chars = word.toCharArray()
+            val lastIdx = chars.size - 1
+            // SUA LOI (nguoi dung phan anh: "luuw" ra "luư" thay vi "lưu"):
+            // neu 2 chu 'u' dung LIEN TIEP nhau ("uu"), cum nay phai thanh
+            // "ưu" (chu U DAU chuyen thanh ư, chu u SAU giu nguyen) - TRUOC
+            // DAY code luon doi CHU CUOI CUNG, sai thu tu am tiet thanh "uư".
+            val prevIsU = lastIdx > 0 && stripTone(chars[lastIdx - 1]).lowercaseChar() == 'u'
+            if (prevIsU) {
+                val prevChar = chars[lastIdx - 1]
+                val rep = if (prevChar.isUpperCase()) 'Ư' else 'ư'
+                val tone = extractTone(prevChar)
+                chars[lastIdx - 1] = if (tone != Tone.NONE) applyToneToChar(rep, tone) else rep
+                return String(chars)
+            }
             val rep = if (lastChar.isUpperCase()) 'Ư' else 'ư'
             val fin = if (existingTone != Tone.NONE) applyToneToChar(rep, existingTone) else rep
             return word.dropLast(1) + fin
@@ -245,6 +308,26 @@ object TelexEngine {
         // Nếu nguyên âm cuối là a/e/i/y (vd "tat","set") -> không áp w, trả null
         // để 'w' được gõ thẳng ra như ký tự bình thường, tránh chèn 'ư' nhầm.
         return transformLastVowelWithW(word, keyIsUpper)
+    }
+
+    /**
+     * Sau khi đã chuyển 1 nguyên âm tại [targetIndex] trong [chars] (chính nó
+     * là 'o' hoặc 'u') sang dạng có móc (ơ/ư) qua phím w, kiểm tra ký tự
+     * NGAY TRƯỚC đó - nếu là 'u' (chưa biến đổi) thì chuyển LUÔN nó thành ư,
+     * tạo thành đúng 2 cụm nguyên âm kép cần cả 2 chữ khi dùng 'w':
+     * "uo" -> "ươ" (vd "phuong"+w -> "phương") và "uu" -> "ưu" (trường hợp
+     * "uu" đứng giữa từ, có phụ âm theo sau). Hàm này SỬA TRỰC TIẾP trên
+     * mảng [chars] (không trả về giá trị).
+     */
+    private fun alsoConvertPrecedingUIfNeeded(chars: CharArray, targetIndex: Int) {
+        if (targetIndex <= 0) return
+        val prevChar = chars[targetIndex - 1]
+        val prevBase = stripTone(prevChar).lowercaseChar()
+        if (prevBase == 'u') {
+            val rep = if (prevChar.isUpperCase()) 'Ư' else 'ư'
+            val tone = extractTone(prevChar)
+            chars[targetIndex - 1] = if (tone != Tone.NONE) applyToneToChar(rep, tone) else rep
+        }
     }
 
     /**
@@ -269,7 +352,18 @@ object TelexEngine {
                 }
                 val tone = extractTone(c)
                 val fin  = if (tone != Tone.NONE) applyToneToChar(rep, tone) else rep
-                return word.substring(0, i) + fin + word.substring(i + 1)
+                val chars = word.toCharArray()
+                chars[i] = fin
+                // SUA LOI (nguoi dung phan anh: "phuongw" ra "phuơng" thay vi
+                // "phương"): cum "uo" (vd "phuong") phai doi CA 2 chu u->ư
+                // VA o->ơ - khong chi rieng chu tim thay. Ap dung ca khi chu
+                // tim thay la 'o' (uo->ươ) lan 'u' (uu->ưu, truong hop hiem
+                // co phu am theo sau) de nhat quan voi 2 nhanh truc tiep o
+                // tren ([applyW]).
+                if (base == 'o' || base == 'u') {
+                    alsoConvertPrecedingUIfNeeded(chars, i)
+                }
+                return String(chars)
             }
         }
         return null

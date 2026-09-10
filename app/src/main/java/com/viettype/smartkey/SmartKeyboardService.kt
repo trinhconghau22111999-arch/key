@@ -806,6 +806,17 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             else -> CapsMode.OFF
         }
         lastShiftTapAt = now
+        // SỬA LỖI (người dùng phản ánh: "chữ cái đầu tiên luôn mặc định là chữ in,
+        // không cho chỉnh lại chữ thường"): khi người dùng CHỦ ĐỘNG bấm Shift để
+        // TẮT hoa (capsMode vừa chuyển về OFF ở trên), phải HUỶ LUÔN autoCapPending
+        // (cờ "tự động viết hoa chữ đầu câu" đang chờ) - nếu không,
+        // refreshLetterCaseDisplay() bên dưới sẽ thấy autoCapPending vẫn còn true
+        // VÀ capsMode==OFF, rồi TỰ BẬT LẠI SINGLE_SHIFT ngay lập tức (xem điều kiện
+        // trong chính hàm đó) - y hệt lỗi đã từng sửa ở afterCharacterCommitted()
+        // (xem comment ở đó) nhưng trước đây thiếu áp dụng cho đường bấm Shift này,
+        // khiến người dùng bấm Shift để tắt hoa nhưng hoa lại "bật lại ngay tức
+        // khắc", CẢM GIÁC như không bấm được / không thể chỉnh về chữ thường.
+        if (capsMode == CapsMode.OFF) autoCapPending = false
         refreshLetterCaseDisplay()
     }
 
