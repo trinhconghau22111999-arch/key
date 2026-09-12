@@ -109,12 +109,16 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         }
         keyboardBody.addView(ledStripView)
 
+        rowsHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // QUAN TRỌNG VỀ THỨ TỰ: phải gọi rebuildKeyRows() (clear + dựng lại ledKeySlots cho
+        // các hàng chữ/số) TRƯỚC khi dựng utilityRowView, rồi mới add cả 2 vào cây view. Nếu
+        // buildUtilityRow() chạy trước như bản cũ, 4 khe viền LED của hàng tiện ích (🌐/QR/🎤/
+        // 123) đăng ký trong đó sẽ bị ledKeySlots.clear() trong rebuildKeyRows() xoá mất ngay
+        // lập tức - xem giải thích đầy đủ hơn ở refreshTheme() (lỗi y hệt).
+        rebuildKeyRows()
         utilityRowView = buildUtilityRow()
         keyboardBody.addView(utilityRowView)
-
-        rowsHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         keyboardBody.addView(rowsHost)
-        rebuildKeyRows()
 
         rootContainer.addView(keyboardBody, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT
@@ -169,6 +173,12 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
      *  thay đổi vừa chọn mà không cần khởi động lại app/điện thoại. */
     private fun refreshTheme() {
         keyboardBody.setBackgroundColor(ThemeSettings.keyboardBackgroundColor(this))
+        // QUAN TRỌNG VỀ THỨ TỰ: rebuildKeyRows() CHẠY TRƯỚC vì nó ledKeySlots.clear() ngay dòng
+        // đầu tiên (xoá sạch để dựng lại từ đầu) - nếu buildUtilityRow() chạy trước như cũ, 4
+        // khe viền LED vừa đăng ký cho hàng tiện ích (🌐/QR/🎤/123) sẽ BỊ XOÁ MẤT NGAY SAU ĐÓ bởi
+        // lệnh clear() này, khiến hàng tiện ích lại mất viền y hệt lỗi cũ dù code thêm ở
+        // utilityButton() đã đúng - đây là lỗi thứ tự gọi hàm, không phải lỗi ở chỗ đăng ký.
+        rebuildKeyRows() // vẽ lại từng phím với màu nền/chữ theo theme mới
         val newUtilityRow = buildUtilityRow()
         val utilityIndex = keyboardBody.indexOfChild(utilityRowView)
         if (utilityIndex >= 0) {
@@ -176,7 +186,6 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             keyboardBody.addView(newUtilityRow, utilityIndex)
         }
         utilityRowView = newUtilityRow
-        rebuildKeyRows() // vẽ lại từng phím với màu nền/chữ theo theme mới
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -192,6 +201,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         super.onDestroy()
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         ledAnimator?.cancel()
+        ledIdleHandler.removeCallbacksAndMessages(null)
         mainHandler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
         // Bàn phím có thể bị hệ thống huỷ hẳn (onDestroy) trong lúc khung quét QR vẫn đang mở
@@ -300,13 +310,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
         }
-        row.addView(utilityButton("🌐") { onGlobeKeyPressed() })
-        row.addView(utilityButton("QR") { onScanButtonPressed() })
-        row.addView(utilityButton("🎤") { onMicButtonPressed() })
+        row.addView(utilityButton("🌐", normX = 0f) { onGlobeKeyPressed() })
+        row.addView(utilityButton("QR", normX = 1f / 3f) { onScanButtonPressed() })
+        row.addView(utilityButton("🎤", normX = 2f / 3f) { onMicButtonPressed() })
         // Nút "?123"/"ABC" cũ ở đây bị TRÙNG chức năng với phím "SYM"/"ABC" đã có sẵn ngay
         // trong các hàng phím phía dưới, nên đổi hẳn thành phím tắt mở bàn phím SỐ kiểu máy
         // tính (trang riêng NUMPAD) cho nhanh, không phụ thuộc đang ở trang nào.
-        row.addView(utilityButton("123") {
+        row.addView(utilityButton("123", normX = 1f) {
             currentPage = Page.NUMPAD
             rebuildKeyRows()
             startLedAnimationIfNeeded()
@@ -314,17 +324,26 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         return row
     }
 
-    private fun utilityButton(label: String, onClick: () -> Unit): TextView {
+    private fun utilityButton(label: String, normX: Float, onClick: () -> Unit): TextView {
         return TextView(this).apply {
             text = label
             gravity = Gravity.CENTER
             setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
             textSize = 14f * keyTextSizeScale()
             layoutParams = LinearLayout.LayoutParams(0, dp(utilityRowHeightDp()), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) }
-            background = GradientDrawable().apply {
+            val keyBackground = GradientDrawable().apply {
                 cornerRadius = dp(6).toFloat()
                 setColor(ThemeSettings.utilityButtonBackgroundColor(this@SmartKeyboardService))
+                // SỬA LỖI (người dùng phản ánh: "4 phím phía trên không có viền"): 4 phím ở hàng
+                // tiện ích (🌐/QR/🎤/123) trước đây KHÔNG hề được thêm vào ledKeySlots - chỉ các
+                // phím do buildKey() tạo (những hàng chữ/số phía dưới) mới có, nên hiệu ứng viền
+                // RGB (và màu viền tĩnh lúc hiệu ứng tắt) không bao giờ chạm tới 4 phím này. Giờ
+                // set sẵn viền trong suốt/độ dày 0 rồi đăng ký vào ledKeySlots giống hệt buildKey()
+                // - hiệu ứng chạy (hoặc màu tĩnh) sẽ tự áp dụng luôn cho cả hàng này.
+                setStroke(0, Color.TRANSPARENT)
             }
+            background = keyBackground
+            ledKeySlots.add(LedKeySlot(keyBackground, normX, 0f)) // hàng trên cùng -> normY = 0
             setOnClickListener {
                 VibrationSettings.tick(this@SmartKeyboardService)
                 onClick()
@@ -562,6 +581,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 MotionEvent.ACTION_DOWN -> {
                     longPressTriggered = false
                     v.alpha = 0.6f
+                    // TIẾT KIỆM PIN: bất kỳ lần chạm phím nào cũng tính là "đang hoạt động" -
+                    // đánh thức lại hiệu ứng LED nếu vừa tạm dừng do 10s không gõ, và luôn hẹn
+                    // giờ lại đồng hồ đếm từ đầu (xem armLedIdleTimer()/pauseLedForIdle()).
+                    notifyLedActivity()
                     // Hiện "bong bóng chữ" (bubble phóng to ký tự, nổi phía trên phím) trong lúc
                     // đang nhấn giữ, nếu người dùng đã bật ở Cài đặt (mặc định TẮT). Bong bóng
                     // biến mất ngay khi nhả tay (xem ACTION_UP/ACTION_CANCEL bên dưới).
@@ -869,8 +892,47 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private val ledColorHsvScratch = FloatArray(3)
     private var lastLedFrameAt = 0L
 
+    // TIET KIEM PIN: sau 10 giay LIEN TUC khong go phim nao, tu TAM DUNG hieu ung LED dang
+    // chay (khong con cap nhat mau/redraw moi khung hinh nua) - gop phan giam hao pin ro ret
+    // khi nguoi dung mo ban phim len roi ngung go 1 luc (vd doc lai tin nhan) nhung van de
+    // ban phim hien, hieu ung truoc day cu chay MAI KHONG NGUNG du khong ai dung toi. Go phim
+    // bat ky lap tuc "danh thuc" lai hieu ung ngay, khong can tat/bat lai o Cai dat.
+    private val ledIdleHandler = Handler(Looper.getMainLooper())
+    private val ledIdleTimeoutMs = 10_000L
+    private var ledPausedForIdle = false
+    private val ledIdleRunnable = Runnable { pauseLedForIdle() }
+
+    /** Hẹn giờ lại 10 giây kể từ THỜI ĐIỂM GÕ GẦN NHẤT - huỷ lịch hẹn cũ (nếu còn) trước khi
+     *  đặt lịch mới, đảm bảo luôn tính đúng "10 giây kể từ lần gõ cuối", không phải 10 giây
+     *  kể từ lúc mở bàn phím lên. */
+    private fun armLedIdleTimer() {
+        ledIdleHandler.removeCallbacks(ledIdleRunnable)
+        ledIdleHandler.postDelayed(ledIdleRunnable, ledIdleTimeoutMs)
+    }
+
+    private fun pauseLedForIdle() {
+        val animator = ledAnimator ?: return
+        if (animator.isRunning) {
+            animator.pause() // pause() giữ nguyên pha màu đang hiển thị, không tắt hẳn/reset
+            ledPausedForIdle = true
+        }
+    }
+
+    /** Gọi mỗi khi người dùng chạm BẤT KỲ phím nào - nếu hiệu ứng LED đang tạm dừng do idle
+     *  thì chạy tiếp ngay (resume() tiếp tục đúng từ pha đang dở dang, không giật/nhảy màu),
+     *  đồng thời luôn hẹn giờ lại đồng hồ đếm 10 giây từ đầu. */
+    private fun notifyLedActivity() {
+        if (ledPausedForIdle) {
+            ledAnimator?.resume()
+            ledPausedForIdle = false
+        }
+        armLedIdleTimer()
+    }
+
     private fun startLedAnimationIfNeeded() {
         ledAnimator?.cancel()
+        ledPausedForIdle = false
+        ledIdleHandler.removeCallbacks(ledIdleRunnable)
 
         if (!LedEffectSettings.isEnabled(this)) {
             // Hiệu ứng "chạy" đang TẮT - dải đèn trên cùng tắt hẳn, nhưng viền phím vẫn phải
@@ -924,6 +986,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             }
             start()
         }
+        armLedIdleTimer()
     }
 
     /** Màu tại 1 pha (0..1) của hiệu ứng - "Nhiều màu" quét cầu vồng đủ 360 độ hue (giữ nguyên
