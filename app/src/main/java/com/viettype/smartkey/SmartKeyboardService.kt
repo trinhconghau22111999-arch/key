@@ -63,6 +63,19 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private lateinit var utilityRowView: View
     private lateinit var rowsHost: LinearLayout
     private val letterKeyViews = mutableListOf<Pair<TextView, Char>>() // để đổi hoa/thường hàng loạt khi shift đổi
+    // TOI UU (nguoi dung phan anh: "go lau lau bat thinh linh no lai khong an: co cham nhung
+    // no khong nhan, khong rung luon"): truoc day refreshLetterCaseDisplay() - goi sau MOI KY
+    // TU go duoc (afterCharacterCommitted()) - luon lam 2 viec TON KEM du hoa/thuong KHONG DOI:
+    // (1) rowsHost.findViewWithTag("shift_key") DUYET DE QUY toan bo cay view MOI LAN GO; (2)
+    // gan lai .text cho CA ~26 phim chu (moi lan tao MOI 1 String qua .toString()) DU trang thai
+    // Hoa/thuong KHONG HE thay doi so voi lan truoc. Hang tram/nghin lan nhu vay trong 1 phien go
+    // gay ap luc GC dinh ky tren luong chinh - dung luc do neu ACTION_DOWN cua 1 nhip cham tiep
+    // theo roi vao dung khoanh khac GC dang chay, touch co the bi tre/mat nhip cam nhan, giong
+    // trieu chung nguoi dung mo ta. Cache san View phim Shift (khoi phai tim lai) + chi thuc su
+    // cap nhat lai chu/icon khi trang thai Hoa/thuong THAT SU DOI KHAC lan truoc.
+    private var shiftKeyView: TextView? = null
+    private var lastAppliedCapsUpper: Boolean? = null
+    private var lastAppliedCapsLock: Boolean? = null
 
     /** 1 "khe" viền phím tham gia hiệu ứng RGB chạy: nền vẽ của phím + vị trí chuẩn
      *  hoá (0..1) của phím đó trong lưới, dùng để tính độ trễ pha khi hiệu ứng chạy qua. */
@@ -393,6 +406,12 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         rowsHost.removeAllViews()
         letterKeyViews.clear()
         ledKeySlots.clear() // phím cũ đã bị gỡ khỏi cây view - bỏ hết khe viền cũ, tránh vẽ vào phím đã mất
+        // View phím cũ (nếu có) sắp bị gỡ hết khỏi cây - reset cache + trạng thái đã áp dụng để
+        // lần refreshLetterCaseDisplay() kế tiếp BẮT BUỘC vẽ lại đầy đủ 1 lần (view mới toanh,
+        // chưa có chữ hoa/thường đúng) thay vì tưởng "không đổi gì" rồi bỏ qua nhầm.
+        shiftKeyView = null
+        lastAppliedCapsUpper = null
+        lastAppliedCapsLock = null
         if (currentPage == Page.NUMPAD) {
             // Trang số kiểu máy tính có phím Enter cao gấp đôi (chiếm 2 hàng dưới cùng) nên
             // không dùng chung được vòng lặp hàng-đều-cột như các trang khác - tự dựng riêng.
@@ -538,6 +557,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         }
         if (code == "SHIFT") {
             keyView.tag = "shift_key"
+            shiftKeyView = keyView
         }
 
         attachKeyTouchHandling(keyView, code)
@@ -865,14 +885,20 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private fun refreshLetterCaseDisplay() {
         if (autoCapPending && capsMode == CapsMode.OFF) capsMode = CapsMode.SINGLE_SHIFT
         val upper = capsMode != CapsMode.OFF
+        val isCapsLock = capsMode == CapsMode.CAPS_LOCK
+        // TOI UU: phan lon cac lan go phim KHONG lam thay doi trang thai Hoa/thuong so voi
+        // lan truoc (vd go lien tiep nhieu chu thuong sau khi hoa dau cau da tat) - bo qua
+        // HOAN TOAN vong lap gan lai .text cho ~26 phim VA buoc tim/cap nhat phim Shift khi
+        // ca 2 gia tri deu giu nguyen, tranh cap phat String + duyet cay view vo ich moi phim.
+        if (upper == lastAppliedCapsUpper && isCapsLock == lastAppliedCapsLock) return
+        lastAppliedCapsUpper = upper
+        lastAppliedCapsLock = isCapsLock
         for ((view, baseChar) in letterKeyViews) {
             view.text = if (upper) baseChar.uppercaseChar().toString() else baseChar.toString()
         }
-        // Tìm đúng phím Shift qua TAG đã gắn ở buildKey() (không dựa vào VỊ TRÍ hàng cố định -
-        // trang Symbols không có hàng nào chứa Shift, dựa theo vị trí dễ ghi đè nhầm lên phím
-        // khác đang đứng ở đúng vị trí đó, vd phím "*" từng bị đè nhãn thành "⇧" trước khi sửa).
-        rowsHost.findViewWithTag<TextView>("shift_key")?.text =
-            if (capsMode == CapsMode.CAPS_LOCK) "⇪" else "⇧"
+        // Tìm đúng phím Shift qua CACHE đã lưu sẵn lúc tạo phím (shiftKeyView) thay vì
+        // findViewWithTag() duyệt đệ quy toàn bộ cây view mỗi lần gọi hàm này.
+        shiftKeyView?.text = if (isCapsLock) "⇪" else "⇧"
     }
 
     // ============================== HIỆU ỨNG VIỀN SÁNG ==============================
