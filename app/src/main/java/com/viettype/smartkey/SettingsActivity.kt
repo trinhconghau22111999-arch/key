@@ -220,6 +220,15 @@ class SettingsActivity : AppCompatActivity() {
                 contentDescription = name
                 setOnClickListener {
                     ThemeSettings.setAccentColor(this@SettingsActivity, color)
+                    // Chọn hẳn 1 màu cụ thể ở đây tức là người dùng muốn THẤY ĐÚNG màu đó -
+                    // nếu hiệu ứng đèn đang chạy kiểu "Nhiều màu" (cầu vồng, không theo màu vừa
+                    // chọn) thì tự động chuyển về "1 màu" (chạy đúng màu vừa chọn) để khỏi bị
+                    // đè mất, đỡ phải tự vào mục Hiệu ứng đổi tay thêm 1 bước nữa.
+                    if (LedEffectSettings.isEnabled(this@SettingsActivity) &&
+                        LedEffectSettings.getColorMode(this@SettingsActivity) == LedEffectSettings.ColorMode.MULTI_COLOR
+                    ) {
+                        LedEffectSettings.setColorMode(this@SettingsActivity, LedEffectSettings.ColorMode.SINGLE_COLOR)
+                    }
                     rebuildAll(forceKeyboardRestart = true)
                 }
             }
