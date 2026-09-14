@@ -4,10 +4,12 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -26,6 +28,10 @@ import java.io.File
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var contentBox: LinearLayout
+
+    /** Ô nhập "giả" chỉ để tự động bật BÀN PHÍM THẬT lên xem trước ngay trong màn Cài đặt -
+     *  không lưu/dùng giá trị gõ vào đây vào việc gì cả, xoá tự do thoải mái. */
+    private var previewEditText: EditText? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,6 +70,13 @@ class SettingsActivity : AppCompatActivity() {
         contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Hiệu ứng đèn RGB chạy"))
         contentBox.addView(buildLedSection())
+        contentBox.addView(spacer())
+        // Khối xem trước đặt SAU CÙNG 2 mục Màu sắc/Hiệu ứng - luôn phản ánh đúng lựa chọn
+        // MỚI NHẤT ở 2 mục phía trên (vì cả màn hình được build lại từ trên xuống dưới mỗi
+        // lần đổi lựa chọn). Có 1 ô nhập "giả" tự động được focus ngay khi build xong để
+        // BÀN PHÍM THẬT tự bật lên xem trước, không cần người dùng tự bấm mở.
+        contentBox.addView(sectionTitle("Xem trước bàn phím"))
+        contentBox.addView(buildKeyboardPreviewSection())
         contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Rung khi gõ"))
         contentBox.addView(buildVibrationSection())
@@ -330,6 +343,65 @@ class SettingsActivity : AppCompatActivity() {
             setStroke(4, if (checked) ThemeSettings.getAccentColor(this@SettingsActivity) else Color.parseColor("#55FFFFFF"))
         }
         setOnClickListener { onClick() }
+    }
+
+    // ============================== XEM TRƯỚC BÀN PHÍM (Ô GÕ THỬ, TỰ ĐỘNG BẬT) ==============================
+
+    /** Thay vì tự vẽ lại từng phím giả (phức tạp, dễ lệch so với bàn phím thật), cách ĐƠN GIẢN
+     *  hơn hẳn: dựng 1 Ô NHẬP THẬT (EditText) ngay trong màn Cài đặt rồi tự động focus + bật
+     *  bàn phím lên ngay khi build xong - nhờ vậy BÀN PHÍM THẬT (đúng y hệt màu/hiệu ứng đang
+     *  áp dụng, không phải hàng giả lập) tự hiện ra để xem, không cần người dùng tự bấm vào ô.
+     *  Giá trị gõ vào ô này KHÔNG được lưu/dùng vào việc gì - chỉ để xem, gõ/xoá thoải mái. */
+    private fun buildKeyboardPreviewSection(): View {
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 20, 20, 20)
+            background = GradientDrawable().apply {
+                cornerRadius = 24f
+                setColor(ThemeSettings.keyboardBackgroundColor(this@SettingsActivity))
+                setStroke(2, Color.parseColor("#33FFFFFF"))
+            }
+        }
+        outer.addView(bodyText(
+            "Bàn phím tự bật lên ngay bên dưới để bạn xem trực tiếp màu sắc/hiệu ứng vừa chọn - " +
+                "gõ thử thoải mái, không lưu lại gì cả."
+        ).apply { setTextColor(Color.LTGRAY) })
+
+        val editText = EditText(this).apply {
+            hint = "Ô xem trước - gõ thử rồi xoá"
+            setHintTextColor(Color.parseColor("#88FFFFFF"))
+            setTextColor(Color.WHITE)
+            inputType = InputType.TYPE_CLASS_TEXT
+            setPadding(24, 20, 24, 20)
+            background = GradientDrawable().apply {
+                cornerRadius = 16f
+                setColor(ThemeSettings.keyBackgroundColor(this@SettingsActivity))
+                setStroke(3, ThemeSettings.getAccentColor(this@SettingsActivity))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.setMargins(0, 12, 0, 0) }
+        }
+        previewEditText = editText
+        outer.addView(editText)
+
+        outer.addView(actionButton("Chọn bàn phím QR Keyboard gaming 2 để xem trước") {
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showInputMethodPicker() // chỉ có cách này để đổi bàn phím đang active - Android không cho app tự ép đổi ngầm
+        })
+        outer.addView(bodyText(
+            "Nếu ô trên đang hiện bàn phím KHÁC (không phải QR Keyboard gaming 2), bấm nút trên " +
+                "để chọn đúng bàn phím này - chỉ cần chọn 1 lần."
+        ))
+
+        // Tự động focus + ép bật bàn phím lên NGAY sau khi view được gắn vào màn hình - người
+        // dùng không cần tự bấm vào ô mới thấy được bàn phím.
+        editText.post {
+            editText.requestFocus()
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(editText, InputMethodManager.SHOW_FORCED)
+        }
+        return outer
     }
 
     // ============================== RUNG KHI GÕ ==============================
