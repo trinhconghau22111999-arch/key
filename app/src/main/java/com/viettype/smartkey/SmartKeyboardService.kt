@@ -4,7 +4,13 @@ package com.viettype.smartkey
 
 import android.animation.ValueAnimator
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
@@ -79,8 +85,75 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     /** 1 "khe" viền phím tham gia hiệu ứng RGB chạy: nền vẽ của phím + vị trí chuẩn
      *  hoá (0..1) của phím đó trong lưới, dùng để tính độ trễ pha khi hiệu ứng chạy qua. */
-    private data class LedKeySlot(val drawable: GradientDrawable, val normX: Float, val normY: Float)
+    private data class LedKeySlot(val drawable: LedKeyDrawable, val normX: Float, val normY: Float)
     private val ledKeySlots = mutableListOf<LedKeySlot>()
+
+    // TOI UU LON NHAT (nguoi dung phan anh: "thinh thoang go khong an, khong rung - nghi la co
+    // co che don rac qua nhieu, dung xong khong xoa"): DUNG NGAY - day chinh la nguyen nhan gay
+    // giat/mat cham khi hieu ung LED dang chay, va DUNG THEO DUNG Y nguoi dung mo ta.
+    //
+    // Truoc day moi phim dung 1 GradientDrawable, va moi khung hinh (~30 lan/giay) hieu ung LED
+    // goi slot.drawable.setStroke(width, mauMoi) cho TUNG phim (~30-40 phim). setStroke(Int,Int)
+    // cua GradientDrawable KHONG he "chi doi mau" nhu ve be ngoai - ben trong no goi thang
+    // ColorStateList.valueOf(mauMoi), ham nay:
+    //   1) TAO MOI 1 ColorStateList + 1 int[] MOI cho MOI mau CHUA TUNG GAP (mau LED lien tuc
+    //      chay qua hang nghin sac do khac nhau moi giay nen HAU NHU LUON la mau moi);
+    //   2) CAC OBJECT NAY duoc LUU VAO 1 CACHE TINH (static) CUA HE THONG ANDROID de tai su
+    //      dung sau nay - nhung cache do KHONG BAO GIO tu xoa/don dep, cu MOI mau moi la CONG
+    //      THEM vao cache, KHONG BAO GIO GIAM - dung 100% nhu nguoi dung mo ta: "dung xong
+    //      nhung khong xoa, tao moi hoai" -> bo nho rac (vua la rac tam thoi cho GC don, vua la
+    //      rac tich luy vinh vien trong cache he thong) chong chat dan theo thoi gian dung hieu
+    //      ung LED, GC phai don don dep thuong xuyen hon tren luong CHINH (luong xu ly ca cham
+    //      man hinh) - dung luc GC chay ma ngon tay vua cham xuong phim thi cham do de bi "tro"
+    //      mat nhip, cam giac dung y nguoi dung: "co cham nhung no khong nhan, khong rung luon".
+    //
+    // Drawable tu viet duoi day thay GradientDrawable CHI cho cac phim tham gia hieu ung LED:
+    // dung Paint.setColor(Int) de doi mau - Paint.setColor() CHI GHI 1 SO NGUYEN vao vung nho
+    // native cua Paint, KHONG cap phat gi ca, KHONG dung ColorStateList/cache gi het. Ket qua:
+    // hieu ung LED chay hang chuc phim x hang chuc khung hinh/giay ma KHONG con tao rac nao nua.
+    private class LedKeyDrawable(private val cornerRadiusPx: Float, fillColor: Int) : Drawable() {
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = fillColor
+        }
+        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+        }
+        private var strokeWidthPx = 0f
+        private val fillRect = RectF()
+        private val strokeRect = RectF()
+
+        fun setFillColor(color: Int) {
+            if (fillPaint.color == color) return
+            fillPaint.color = color
+            invalidateSelf()
+        }
+
+        /** Thay cho GradientDrawable.setStroke(width, color) - CHỈ ghi giá trị vào Paint có sẵn,
+         *  không cấp phát object nào, an toàn gọi hàng nghìn lần/giây trong vòng lặp hiệu ứng LED. */
+        fun setStrokeLive(widthPx: Int, color: Int) {
+            strokeWidthPx = widthPx.toFloat()
+            strokePaint.strokeWidth = strokeWidthPx
+            strokePaint.color = color
+            invalidateSelf()
+        }
+
+        override fun draw(canvas: Canvas) {
+            fillRect.set(bounds)
+            canvas.drawRoundRect(fillRect, cornerRadiusPx, cornerRadiusPx, fillPaint)
+            if (strokeWidthPx > 0f) {
+                val half = strokeWidthPx / 2f
+                strokeRect.set(bounds)
+                strokeRect.inset(half, half) // viền vẽ NẰM TRỌN trong biên phím, không bị cắt mép
+                canvas.drawRoundRect(strokeRect, cornerRadiusPx, cornerRadiusPx, strokePaint)
+            }
+        }
+
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(colorFilter: ColorFilter?) {}
+        @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
 
     private var ledAnimator: ValueAnimator? = null
 
@@ -344,16 +417,14 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
             textSize = 14f * keyTextSizeScale()
             layoutParams = LinearLayout.LayoutParams(0, dp(utilityRowHeightDp()), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) }
-            val keyBackground = GradientDrawable().apply {
-                cornerRadius = dp(6).toFloat()
-                setColor(ThemeSettings.utilityButtonBackgroundColor(this@SmartKeyboardService))
+            val keyBackground = LedKeyDrawable(dp(6).toFloat(), ThemeSettings.utilityButtonBackgroundColor(this@SmartKeyboardService)).apply {
                 // SỬA LỖI (người dùng phản ánh: "4 phím phía trên không có viền"): 4 phím ở hàng
                 // tiện ích (🌐/QR/🎤/123) trước đây KHÔNG hề được thêm vào ledKeySlots - chỉ các
                 // phím do buildKey() tạo (những hàng chữ/số phía dưới) mới có, nên hiệu ứng viền
                 // RGB (và màu viền tĩnh lúc hiệu ứng tắt) không bao giờ chạm tới 4 phím này. Giờ
                 // set sẵn viền trong suốt/độ dày 0 rồi đăng ký vào ledKeySlots giống hệt buildKey()
                 // - hiệu ứng chạy (hoặc màu tĩnh) sẽ tự áp dụng luôn cho cả hàng này.
-                setStroke(0, Color.TRANSPARENT)
+                setStrokeLive(0, Color.TRANSPARENT)
             }
             background = keyBackground
             ledKeySlots.add(LedKeySlot(keyBackground, normX, 0f)) // hàng trên cùng -> normY = 0
@@ -517,12 +588,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         val weight = weightOverride ?: if (code == "SPACE") 4f else 1f
         val label = displayLabelFor(code)
 
-        val keyBackground = GradientDrawable().apply {
-            cornerRadius = dp(6).toFloat()
-            setColor(ThemeSettings.keyBackgroundColor(this@SmartKeyboardService))
+        val keyBackground = LedKeyDrawable(dp(6).toFloat(), ThemeSettings.keyBackgroundColor(this@SmartKeyboardService)).apply {
             // Viền bắt đầu trong suốt, độ dày 0 - hiệu ứng RGB chạy (nếu đang BẬT) sẽ tự
             // set màu + độ dày viền theo thời gian thực, xem startLedAnimationIfNeeded().
-            setStroke(0, Color.TRANSPARENT)
+            setStrokeLive(0, Color.TRANSPARENT)
         }
         ledKeySlots.add(LedKeySlot(keyBackground, normX, normY))
 
@@ -966,7 +1035,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             // đây nên đổi màu trong Cài đặt không thấy tác dụng gì trên bàn phím thật).
             ledStripView.setBackgroundColor(Color.TRANSPARENT)
             val staticColor = ThemeSettings.getAccentColor(this)
-            for (slot in ledKeySlots) slot.drawable.setStroke(ledBorderWidthPx, staticColor)
+            for (slot in ledKeySlots) slot.drawable.setStrokeLive(ledBorderWidthPx, staticColor)
             return
         }
 
@@ -1007,7 +1076,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                         LedEffectSettings.Direction.DIAGONAL -> (slot.normX + slot.normY) / 2f
                     }
                     val phase = ((globalT + posAlong) % 1f + 1f) % 1f
-                    slot.drawable.setStroke(ledBorderWidthPx, colorAtPhase(phase, colorMode, singleHsv, ledColorHsvScratch))
+                    slot.drawable.setStrokeLive(ledBorderWidthPx, colorAtPhase(phase, colorMode, singleHsv, ledColorHsvScratch))
                 }
             }
             start()
