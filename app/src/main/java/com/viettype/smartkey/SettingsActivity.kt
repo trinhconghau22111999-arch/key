@@ -33,6 +33,11 @@ class SettingsActivity : AppCompatActivity() {
      *  không lưu/dùng giá trị gõ vào đây vào việc gì cả, xoá tự do thoải mái. */
     private var previewEditText: EditText? = null
 
+    /** true khi lần rebuild NÀY là do vừa đổi màu/hiệu ứng - báo cho buildKeyboardPreviewSection()
+     *  biết cần CHỜ MỘT NHỊP rồi mới bật lại bàn phím (thay vì bật lại ngay lập tức), để bàn
+     *  phím thật kịp tắt hẳn trước khi bật lại - đúng như "tắt rồi bật lại" người dùng yêu cầu. */
+    private var pendingPreviewKeyboardRestart = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -53,7 +58,19 @@ class SettingsActivity : AppCompatActivity() {
         rebuildAll() // trạng thái bàn phím có thể vừa đổi sau khi quay lại từ Cài đặt hệ thống
     }
 
-    private fun rebuildAll() {
+    /** forceKeyboardRestart = true: dùng cho lúc đổi MÀU SẮC/HIỆU ỨNG ĐÈN - chủ động ẩn hẳn
+     *  bàn phím thật (y hệt bấm nút Back) trước khi build lại, rồi mới bật lại sau 1 nhịp ngắn.
+     *  Bàn phím có sẵn logic tự đọc lại theme mỗi lần MỞ LẠI (refreshTheme() trong
+     *  onStartInputView() - xem SmartKeyboardService.kt), nên tắt hẳn rồi bật lại là cách
+     *  CHẮC CHẮN nhất để ép nó chạy lại đúng logic đó, thay vì chỉ đổi focus ngầm giữa 2 View. */
+    private fun rebuildAll(forceKeyboardRestart: Boolean = false) {
+        if (forceKeyboardRestart) {
+            previewEditText?.let {
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.hideSoftInputFromWindow(it.windowToken, 0) // = bấm Back để tắt bàn phím
+            }
+            pendingPreviewKeyboardRestart = true
+        }
         contentBox.removeAllViews()
         contentBox.addView(sectionTitle("QR Keyboard gaming 2"))
         contentBox.addView(versionInfoText())
@@ -203,7 +220,7 @@ class SettingsActivity : AppCompatActivity() {
                 contentDescription = name
                 setOnClickListener {
                     ThemeSettings.setAccentColor(this@SettingsActivity, color)
-                    rebuildAll()
+                    rebuildAll(forceKeyboardRestart = true)
                 }
             }
             row.addView(swatch)
@@ -225,7 +242,7 @@ class SettingsActivity : AppCompatActivity() {
             textColor = if (isDark) Color.WHITE else Color.parseColor("#1A0F2E")
         ) {
             ThemeSettings.setDarkTheme(this@SettingsActivity, !isDark)
-            rebuildAll()
+            rebuildAll(forceKeyboardRestart = true)
         })
         return box
     }
@@ -270,7 +287,7 @@ class SettingsActivity : AppCompatActivity() {
             checked = enabled
         ) {
             LedEffectSettings.setEnabled(this@SettingsActivity, !enabled)
-            rebuildAll()
+            rebuildAll(forceKeyboardRestart = true)
         })
 
         if (!enabled) return box // các tuỳ chọn bên dưới chỉ có ý nghĩa khi hiệu ứng đang bật
@@ -283,11 +300,11 @@ class SettingsActivity : AppCompatActivity() {
         }
         colorModeRow.addView(chip("Nhiều màu", colorMode == LedEffectSettings.ColorMode.MULTI_COLOR) {
             LedEffectSettings.setColorMode(this, LedEffectSettings.ColorMode.MULTI_COLOR)
-            rebuildAll()
+            rebuildAll(forceKeyboardRestart = true)
         })
         colorModeRow.addView(chip("1 màu (màu viền)", colorMode == LedEffectSettings.ColorMode.SINGLE_COLOR) {
             LedEffectSettings.setColorMode(this, LedEffectSettings.ColorMode.SINGLE_COLOR)
-            rebuildAll()
+            rebuildAll(forceKeyboardRestart = true)
         })
         box.addView(colorModeRow)
 
@@ -299,15 +316,15 @@ class SettingsActivity : AppCompatActivity() {
         }
         directionRow.addView(chip("Trái -> Phải", direction == LedEffectSettings.Direction.LEFT_TO_RIGHT) {
             LedEffectSettings.setDirection(this, LedEffectSettings.Direction.LEFT_TO_RIGHT)
-            rebuildAll()
+            rebuildAll(forceKeyboardRestart = true)
         })
         directionRow.addView(chip("Trên -> Dưới", direction == LedEffectSettings.Direction.TOP_TO_BOTTOM) {
             LedEffectSettings.setDirection(this, LedEffectSettings.Direction.TOP_TO_BOTTOM)
-            rebuildAll()
+            rebuildAll(forceKeyboardRestart = true)
         })
         directionRow.addView(chip("Chéo góc", direction == LedEffectSettings.Direction.DIAGONAL) {
             LedEffectSettings.setDirection(this, LedEffectSettings.Direction.DIAGONAL)
-            rebuildAll()
+            rebuildAll(forceKeyboardRestart = true)
         })
         box.addView(directionRow)
 
@@ -396,11 +413,17 @@ class SettingsActivity : AppCompatActivity() {
 
         // Tự động focus + ép bật bàn phím lên NGAY sau khi view được gắn vào màn hình - người
         // dùng không cần tự bấm vào ô mới thấy được bàn phím.
-        editText.post {
+        // Nếu lần build này là do vừa đổi MÀU/HIỆU ỨNG (đã chủ động ẩn bàn phím CŨ ở rebuildAll()
+        // phía trên) thì phải CHỜ 1 NHỊP (~250ms) mới bật lại - bật lại ngay lập tức trong cùng
+        // 1 khung hình có thể khiến hệ thống gộp tắt+bật thành 1 thao tác đổi focus ngầm, bàn
+        // phím thật không thực sự đóng-mở lại nên KHÔNG chạy lại refreshTheme() để lấy màu mới.
+        val restartDelayMs = if (pendingPreviewKeyboardRestart) 250L else 0L
+        pendingPreviewKeyboardRestart = false
+        editText.postDelayed({
             editText.requestFocus()
             val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showSoftInput(editText, InputMethodManager.SHOW_FORCED)
-        }
+        }, restartDelayMs)
         return outer
     }
 
