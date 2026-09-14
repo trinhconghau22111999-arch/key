@@ -66,6 +66,12 @@
             </intent-filter>
         </activity>
 
+        <!-- Màn cắt vùng ảnh tự do khi đặt hình nền bàn phím - mở từ SettingsActivity ngay
+             sau khi người dùng chọn xong 1 ảnh bất kỳ từ thư viện/thư mục máy. -->
+        <activity
+            android:name=".BackgroundImageCropActivity"
+            android:exported="false" />
+
         <!-- Dịch vụ bàn phím (Input Method Service) -->
         <service
             android:name=".SmartKeyboardService"

@@ -1,8 +1,11 @@
 package com.viettype.smartkey
 
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -10,6 +13,7 @@ import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -26,6 +30,11 @@ import java.io.File
  * hạn quét/ngày, lịch sử quét (xem/xuất Excel/xoá), và nhật ký lỗi (nếu có).
  */
 class SettingsActivity : AppCompatActivity() {
+
+    companion object {
+        private const val REQUEST_PICK_BACKGROUND_IMAGE = 701
+        private const val REQUEST_CROP_BACKGROUND_IMAGE = 702
+    }
 
     private lateinit var contentBox: LinearLayout
 
@@ -253,7 +262,109 @@ class SettingsActivity : AppCompatActivity() {
             ThemeSettings.setDarkTheme(this@SettingsActivity, !isDark)
             rebuildAll(forceKeyboardRestart = true)
         })
+
+        box.addView(spacer())
+        box.addView(buildBackgroundImageSection())
         return box
+    }
+
+    /** Đặt hẳn 1 ảnh làm nền bàn phím thay cho màu Sáng/Tối - bấm nút là mở thư mục/thư viện
+     *  ảnh của máy để chọn, sau đó sang màn cắt (BackgroundImageCropActivity) để CHỌN VÙNG ẢNH
+     *  TỰ DO (không cố định sẵn khung nào), chọn xong áp dụng ngay lên bàn phím thật. */
+    private fun buildBackgroundImageSection(): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(bodyText(
+            "Hoặc đặt hẳn 1 ảnh làm nền bàn phím thay cho màu Sáng/Tối ở trên - bấm vào để chọn " +
+                "ảnh rồi tự chọn vùng ảnh muốn dùng, không cố định sẵn khung nào."
+        ))
+
+        val currentPath = ThemeSettings.getBackgroundImagePath(this)
+        if (currentPath != null) {
+            val previewRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 12, 0, 0)
+            }
+            val thumb = decodeSampledThumbnail(currentPath, 160, 90)
+            previewRow.addView(ImageView(this).apply {
+                setImageBitmap(thumb)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                layoutParams = LinearLayout.LayoutParams(dp(120), dp(64)).also { it.setMargins(0, 0, 16, 0) }
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(8).toFloat()
+                    setStroke(2, Color.parseColor("#55FFFFFF"))
+                }
+                clipToOutline = true
+            })
+            val buttonCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            buttonCol.addView(actionButton("Đổi ảnh khác") { launchImagePicker() })
+            buttonCol.addView(actionButton("Xoá hình nền, dùng lại màu") {
+                ThemeSettings.clearBackgroundImage(this@SettingsActivity)
+                rebuildAll(forceKeyboardRestart = true)
+            }.also { it.layoutParams = (it.layoutParams as? LinearLayout.LayoutParams
+                ?: LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+                .also { lp -> lp.topMargin = 12 } })
+            previewRow.addView(buttonCol)
+            box.addView(previewRow)
+        } else {
+            box.addView(actionButton("🖼  Chọn ảnh làm nền") { launchImagePicker() }.also {
+                it.layoutParams = (it.layoutParams as? LinearLayout.LayoutParams
+                    ?: LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+                    .also { lp -> lp.topMargin = 12 }
+            })
+        }
+        return box
+    }
+
+    /** Mở thư mục/thư viện ảnh có sẵn của máy để chọn 1 ảnh bất kỳ - dùng ACTION_GET_CONTENT
+     *  (thay vì Storage Access Framework ACTION_OPEN_DOCUMENT) để tương thích rộng hơn với các
+     *  ứng dụng thư viện ảnh/quản lý file khác nhau trên nhiều dòng máy/phiên bản Android. */
+    private fun launchImagePicker() {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
+        try {
+            startActivityForResult(intent, REQUEST_PICK_BACKGROUND_IMAGE)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Không tìm thấy ứng dụng chọn ảnh nào trên máy.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        when (requestCode) {
+            REQUEST_PICK_BACKGROUND_IMAGE -> {
+                val uri: Uri? = data?.data
+                if (resultCode == RESULT_OK && uri != null) {
+                    startActivityForResult(
+                        Intent(this, BackgroundImageCropActivity::class.java)
+                            .putExtra(BackgroundImageCropActivity.EXTRA_IMAGE_URI, uri),
+                        REQUEST_CROP_BACKGROUND_IMAGE
+                    )
+                }
+            }
+            REQUEST_CROP_BACKGROUND_IMAGE -> {
+                if (resultCode == RESULT_OK) {
+                    // Ảnh nền vừa đặt xong (đã lưu sẵn file trong BackgroundImageCropActivity) -
+                    // build lại toàn màn để cập nhật cả khối xem trước lẫn ảnh thumbnail ở đây,
+                    // đồng thời tắt/bật lại bàn phím thật để thấy ảnh nền mới ngay lập tức.
+                    rebuildAll(forceKeyboardRestart = true)
+                }
+            }
+        }
+    }
+
+    /** Đọc ảnh xuống đúng cỡ hiển thị nhỏ (thumbnail) thay vì decode nguyên ảnh gốc chỉ để hiện
+     *  1 ô nhỏ vài chục px - tránh tốn bộ nhớ/CPU vô ích mỗi lần màn Cài đặt build lại (mà màn
+     *  này build lại RẤT THƯỜNG XUYÊN - xem rebuildAll(), mỗi lần đổi bất kỳ lựa chọn nào). */
+    private fun decodeSampledThumbnail(path: String, reqWidthDp: Int, reqHeightDp: Int): Bitmap? {
+        val reqWidthPx = dp(reqWidthDp)
+        val reqHeightPx = dp(reqHeightDp)
+        val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, boundsOptions)
+        var sampleSize = 1
+        while (boundsOptions.outWidth / (sampleSize * 2) >= reqWidthPx && boundsOptions.outHeight / (sampleSize * 2) >= reqHeightPx) {
+            sampleSize *= 2
+        }
+        return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sampleSize })
     }
 
     /** Nút bo tròn có viền nổi bật màu chủ đạo, bấm vào là chuyển sang trạng thái khác ngay
@@ -625,6 +736,8 @@ class SettingsActivity : AppCompatActivity() {
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2)
         setBackgroundColor(Color.parseColor("#33FFFFFF"))
     }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun actionButton(text: String, onClick: () -> Unit): Button = Button(this).apply {
         this.text = text

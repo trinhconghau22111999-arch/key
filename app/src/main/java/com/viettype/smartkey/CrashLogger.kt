@@ -35,6 +35,24 @@ object CrashLogger {
         }
     }
 
+    /** Ghi lại 1 lỗi đã được BẮT (try/catch) chứ không làm crash cả app - dùng ở những chỗ xử
+     *  lý dữ liệu ngoài (đọc file ảnh người dùng chọn...) có thể lỗi vì đủ lý do (ảnh hỏng, định
+     *  dạng lạ...) nhưng không muốn app tự sập, chỉ cần lưu lại để xem sau nếu cần chẩn đoán. */
+    fun log(context: Context, message: String, throwable: Throwable? = null) {
+        try {
+            val stringWriter = StringWriter()
+            throwable?.printStackTrace(PrintWriter(stringWriter))
+            val entry = buildString {
+                append("===== ").append(timeFormat.format(Date())).append(" (log: ").append(message).append(") =====\n")
+                if (throwable != null) append(stringWriter.toString())
+                append("\n")
+            }
+            logFile(context).appendText(entry)
+        } catch (ignored: Exception) {
+            // Ghi log thất bại thì bỏ qua - không để việc log phụ này làm hỏng luồng chính.
+        }
+    }
+
     private fun appendCrash(context: Context, threadName: String, throwable: Throwable) {
         val stringWriter = StringWriter()
         throwable.printStackTrace(PrintWriter(stringWriter))

@@ -258,7 +258,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
      *  đang chọn trong Cài đặt (Màu sắc). Gọi mỗi lần bàn phím hiện lên để áp dụng ngay
      *  thay đổi vừa chọn mà không cần khởi động lại app/điện thoại. */
     private fun refreshTheme() {
-        keyboardBody.setBackgroundColor(ThemeSettings.keyboardBackgroundColor(this))
+        applyKeyboardBackground()
         // QUAN TRỌNG VỀ THỨ TỰ: rebuildKeyRows() CHẠY TRƯỚC vì nó ledKeySlots.clear() ngay dòng
         // đầu tiên (xoá sạch để dựng lại từ đầu) - nếu buildUtilityRow() chạy trước như cũ, 4
         // khe viền LED vừa đăng ký cho hàng tiện ích (🌐/QR/🎤/123) sẽ BỊ XOÁ MẤT NGAY SAU ĐÓ bởi
@@ -272,6 +272,54 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             keyboardBody.addView(newUtilityRow, utilityIndex)
         }
         utilityRowView = newUtilityRow
+    }
+
+    // Cache ảnh nền ĐÃ GIẢI MÃ - refreshTheme() chạy mỗi lần bàn phím hiện lên (onStartInputView),
+    // có thể hàng chục lần/phiên gõ nếu người dùng chuyển qua lại giữa nhiều ô nhập. Nếu decode
+    // lại ảnh từ file MỖI LẦN như vậy sẽ lặp lại ĐÚNG kiểu vấn đề "tạo mới liên tục, dùng xong
+    // không tái sử dụng" đã sửa ở hiệu ứng LED (xem LedKeyDrawable) - chỉ khác là ở quy mô hàng
+    // chục lần/phiên thay vì hàng nghìn lần/giây nên không gây giật NGAY LẬP TỨC, nhưng vẫn là
+    // thói quen nên tránh. Chỉ decode lại khi đường dẫn ảnh THẬT SỰ đổi (đặt ảnh mới/xoá ảnh).
+    private var cachedBackgroundBitmap: android.graphics.Bitmap? = null
+    private var cachedBackgroundPath: String? = null
+
+    private fun applyKeyboardBackground() {
+        val imagePath = ThemeSettings.getBackgroundImagePath(this)
+        if (imagePath == null) {
+            // Không/không còn ảnh nền tuỳ chỉnh - giải phóng bitmap cache (nếu có từ trước) rồi
+            // quay về vẽ màu theo Sáng/Tối như bình thường.
+            if (cachedBackgroundBitmap != null) {
+                cachedBackgroundBitmap?.recycle()
+                cachedBackgroundBitmap = null
+                cachedBackgroundPath = null
+            }
+            keyboardBody.background = null
+            keyboardBody.setBackgroundColor(ThemeSettings.keyboardBackgroundColor(this))
+            return
+        }
+
+        if (imagePath != cachedBackgroundPath) {
+            cachedBackgroundBitmap?.recycle()
+            cachedBackgroundBitmap = try {
+                android.graphics.BitmapFactory.decodeFile(imagePath)
+            } catch (e: Exception) {
+                CrashLogger.log(this, "SmartKeyboardService: loi doc anh nen", e)
+                null
+            }
+            cachedBackgroundPath = imagePath
+        }
+
+        val bitmap = cachedBackgroundBitmap
+        if (bitmap != null) {
+            // BitmapDrawable mặc định co giãn LẤP ĐẦY toàn bộ bounds của View chứa nó (gravity
+            // FILL) - ảnh đã được người dùng tự cắt đúng vùng muốn dùng ở màn chọn ảnh nên co
+            // giãn vừa khít khung bàn phím là đúng ý, không cần crop/scale thêm gì ở đây nữa.
+            keyboardBody.background = android.graphics.drawable.BitmapDrawable(resources, bitmap)
+        } else {
+            // Lỡ đọc file lỗi (file hỏng/bị xoá giữa chừng) - không để bàn phím trống trơn
+            // không có nền gì cả, quay về màu Sáng/Tối làm phương án dự phòng an toàn.
+            keyboardBody.setBackgroundColor(ThemeSettings.keyboardBackgroundColor(this))
+        }
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -290,6 +338,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         ledIdleHandler.removeCallbacksAndMessages(null)
         mainHandler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
+        cachedBackgroundBitmap?.recycle()
+        cachedBackgroundBitmap = null
         // Bàn phím có thể bị hệ thống huỷ hẳn (onDestroy) trong lúc khung quét QR vẫn đang mở
         // (giờ không còn tự đóng theo onFinishInputView nữa) - phải tự giải phóng camera ở đây,
         // nếu không sẽ rò rỉ camera/đèn flash vẫn bật ngầm dù bàn phím đã biến mất.
