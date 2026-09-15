@@ -1,7 +1,5 @@
 package com.viettype.smartkey
 
-import java.text.Normalizer
-
 /**
  * Bộ xử lý gõ tiếng Việt kiểu TELEX, hoạt động trên "từ đang gõ dở".
  *
@@ -30,8 +28,6 @@ object TelexEngine {
     private const val MARK_HOOK     = '\u0309'  // hỏi
     private const val MARK_TILDE    = '\u0303'  // ngã
     private const val MARK_DOT     = '\u0323'  // nặng
-
-    private val TONE_MARKS = setOf(MARK_ACUTE, MARK_GRAVE, MARK_HOOK, MARK_TILDE, MARK_DOT)
 
     enum class Tone(val mark: Char?) {
         NONE(null),
@@ -373,21 +369,59 @@ object TelexEngine {
     //  Unicode helpers
     // =========================================================================
 
+    // TOI UU (nguoi dung yeu cau ra soat lai hieu nang sau khi da sua hieu ung LED): TRUOC DAY
+    // applyToneToChar()/stripTone()/extractTone() dung Normalizer.normalize() (tach roi ghep
+    // lai Unicode NFD<->NFC) - moi LAN GOI cap phat 3-4 String MOI (c.toString(), decomposed,
+    // keptMarks qua .filter{}, newSequence noi chuoi, recomposed). Cac ham nay bi goi RAT NHIEU
+    // LAN cho MOI KY TU go (tim nguyen am, doi thanh, go lai chu goc...) - vd go 1 tu co dau
+    // qua Telex co the goi toi 5-10 lan/phim, cong don ca phien go la hang tram/nghin String
+    // rac, dung kieu van de da sua o hieu ung LED (chi khac quy mo: moi PHIM go thay vi moi
+    // KHUNG HINH). Thay bang BANG TRA CUU TINH (tinh san 1 lan luc load class) - tra Map O(1),
+    // KHONG cap phat String nao (Char.lowercaseChar()/uppercaseChar() chi doi 1 KY TU, khong
+    // tao String moi, khac han String.lowercase()/uppercase()).
+    private val TONE_TABLE: Map<Char, CharArray> = mapOf(
+        // Moi hang: [khong dau, sac, huyen, hoi, nga, nang] - dung DUNG thu tu enum Tone phia
+        // tren (NONE, ACUTE, GRAVE, HOOK, TILDE, DOT) de tra bang qua tone.ordinal truc tiep.
+        'a' to charArrayOf('a', 'á', 'à', 'ả', 'ã', 'ạ'),
+        'ă' to charArrayOf('ă', 'ắ', 'ằ', 'ẳ', 'ẵ', 'ặ'),
+        'â' to charArrayOf('â', 'ấ', 'ầ', 'ẩ', 'ẫ', 'ậ'),
+        'e' to charArrayOf('e', 'é', 'è', 'ẻ', 'ẽ', 'ẹ'),
+        'ê' to charArrayOf('ê', 'ế', 'ề', 'ể', 'ễ', 'ệ'),
+        'i' to charArrayOf('i', 'í', 'ì', 'ỉ', 'ĩ', 'ị'),
+        'o' to charArrayOf('o', 'ó', 'ò', 'ỏ', 'õ', 'ọ'),
+        'ô' to charArrayOf('ô', 'ố', 'ồ', 'ổ', 'ỗ', 'ộ'),
+        'ơ' to charArrayOf('ơ', 'ớ', 'ờ', 'ở', 'ỡ', 'ợ'),
+        'u' to charArrayOf('u', 'ú', 'ù', 'ủ', 'ũ', 'ụ'),
+        'ư' to charArrayOf('ư', 'ứ', 'ừ', 'ử', 'ữ', 'ự'),
+        'y' to charArrayOf('y', 'ý', 'ỳ', 'ỷ', 'ỹ', 'ỵ'),
+    )
+
+    /** Bảng NGƯỢC (dựng 1 lần từ [TONE_TABLE] ở trên) - tra 1 ký tự nguyên âm CÓ THỂ ĐANG MANG
+     *  THANH (vd 'ố') ra (chữ gốc không thanh 'ô', thanh điệu ACUTE) - dùng cho extractTone()/
+     *  applyToneToChar() để biết chữ gốc trước khi đổi sang thanh khác. */
+    private class VowelInfo(val base: Char, val tone: Tone)
+    private val DECOMPOSE_TABLE: Map<Char, VowelInfo> = buildMap {
+        for ((base, variantsByTone) in TONE_TABLE) {
+            for ((toneOrdinal, ch) in variantsByTone.withIndex()) {
+                put(ch, VowelInfo(base, Tone.entries[toneOrdinal]))
+            }
+        }
+    }
+
+    /** Đổi [c] (nguyên âm, có thể đang mang thanh khác hoặc không mang thanh nào) sang mang
+     *  đúng thanh [tone] - giữ nguyên chữ HOA/thường của [c]. Nếu [c] không phải 1 trong các
+     *  nguyên âm tiếng Việt có thể mang thanh (vd phụ âm, số, ký tự khác) thì trả về NGUYÊN
+     *  [c] không đổi gì - y hệt hành vi cũ dùng Normalizer (NFD của 1 phụ âm không có dấu tổ
+     *  hợp nào để tách/gắn thêm, nên gắn dấu vào cũng không tạo ra ký tự tổ hợp sẵn nào). */
     private fun applyToneToChar(c: Char, tone: Tone): Char {
-        val decomposed  = Normalizer.normalize(c.toString(), Normalizer.Form.NFD)
-        val keptMarks   = decomposed.drop(1).filter { it !in TONE_MARKS }
-        val newSequence = decomposed[0] + keptMarks + (tone.mark?.toString() ?: "")
-        val recomposed  = Normalizer.normalize(newSequence, Normalizer.Form.NFC)
-        return recomposed[0]
+        val info = DECOMPOSE_TABLE[c.lowercaseChar()] ?: return c
+        val result = TONE_TABLE.getValue(info.base)[tone.ordinal]
+        return if (c.isUpperCase()) result.uppercaseChar() else result
     }
 
     private fun stripTone(c: Char): Char = applyToneToChar(c, Tone.NONE)
 
-    private fun extractTone(c: Char): Tone {
-        val decomposed = Normalizer.normalize(c.toString(), Normalizer.Form.NFD)
-        val mark       = decomposed.drop(1).firstOrNull { it in TONE_MARKS }
-        return Tone.entries.find { it.mark == mark } ?: Tone.NONE
-    }
+    private fun extractTone(c: Char): Tone = DECOMPOSE_TABLE[c.lowercaseChar()]?.tone ?: Tone.NONE
 
     // =========================================================================
     //  Tìm nguyên âm & chọn vị trí đặt thanh
