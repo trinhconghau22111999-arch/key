@@ -467,7 +467,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
             textSize = 14f * keyTextSizeScale()
             layoutParams = LinearLayout.LayoutParams(0, dp(utilityRowHeightDp()), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) }
-            val keyBackground = LedKeyDrawable(dp(6).toFloat(), ThemeSettings.utilityButtonBackgroundColor(this@SmartKeyboardService)).apply {
+            val keyBackground = LedKeyDrawable(dp(6).toFloat(), ThemeSettings.effectiveUtilityButtonFillColor(this@SmartKeyboardService)).apply {
                 // SỬA LỖI (người dùng phản ánh: "4 phím phía trên không có viền"): 4 phím ở hàng
                 // tiện ích (🌐/QR/🎤/123) trước đây KHÔNG hề được thêm vào ledKeySlots - chỉ các
                 // phím do buildKey() tạo (những hàng chữ/số phía dưới) mới có, nên hiệu ứng viền
@@ -638,7 +638,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         val weight = weightOverride ?: if (code == "SPACE") 4f else 1f
         val label = displayLabelFor(code)
 
-        val keyBackground = LedKeyDrawable(dp(6).toFloat(), ThemeSettings.keyBackgroundColor(this@SmartKeyboardService)).apply {
+        val keyBackground = LedKeyDrawable(dp(6).toFloat(), ThemeSettings.effectiveKeyFillColor(this@SmartKeyboardService)).apply {
             // Viền bắt đầu trong suốt, độ dày 0 - hiệu ứng RGB chạy (nếu đang BẬT) sẽ tự
             // set màu + độ dày viền theo thời gian thực, xem startLedAnimationIfNeeded().
             setStrokeLive(0, Color.TRANSPARENT)

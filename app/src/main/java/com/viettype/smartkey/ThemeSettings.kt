@@ -72,6 +72,13 @@ object ThemeSettings {
     fun keyBackgroundColor(context: Context): Int =
         if (isDarkTheme(context)) 0xFF2A1F4A.toInt() else 0xFFFFFFFF.toInt()
 
+    /** Màu TÔ NỀN THỰC SỰ dùng khi vẽ từng phím (khác với [keyBackgroundColor] ở trên) - khi
+     *  người dùng đã đặt ẢNH làm nền bàn phím thì phím KHÔNG được tô màu nền đè lên ảnh nữa,
+     *  phải để TRONG SUỐT để thấy xuyên qua đúng ảnh nền phía sau, chỉ còn viền LED (nếu hiệu
+     *  ứng đang chạy) + chữ trên phím là còn hiện. Không có ảnh nền thì tô màu như bình thường. */
+    fun effectiveKeyFillColor(context: Context): Int =
+        if (hasBackgroundImage(context)) Color.TRANSPARENT else keyBackgroundColor(context)
+
     /** Màu chữ/icon trên phím. */
     fun keyTextColor(context: Context): Int =
         if (isDarkTheme(context)) Color.WHITE else 0xFF1A0F2E.toInt()
@@ -79,6 +86,11 @@ object ThemeSettings {
     /** Màu nền các nút tiện ích (🌐, QR, 🎤, 123) ở hàng trên cùng. */
     fun utilityButtonBackgroundColor(context: Context): Int =
         if (isDarkTheme(context)) Color.parseColor("#332A1F4A") else Color.parseColor("#14000000")
+
+    /** Như [effectiveKeyFillColor] nhưng cho hàng tiện ích - cùng lý do: có ảnh nền thì trong
+     *  suốt để thấy ảnh, không có ảnh nền thì tô màu như bình thường. */
+    fun effectiveUtilityButtonFillColor(context: Context): Int =
+        if (hasBackgroundImage(context)) Color.TRANSPARENT else utilityButtonBackgroundColor(context)
 
     // ============================== HÌNH NỀN TUỲ CHỌN (ẢNH) ==============================
 
