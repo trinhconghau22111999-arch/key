@@ -279,9 +279,19 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     // lại ảnh từ file MỖI LẦN như vậy sẽ lặp lại ĐÚNG kiểu vấn đề "tạo mới liên tục, dùng xong
     // không tái sử dụng" đã sửa ở hiệu ứng LED (xem LedKeyDrawable) - chỉ khác là ở quy mô hàng
     // chục lần/phiên thay vì hàng nghìn lần/giây nên không gây giật NGAY LẬP TỨC, nhưng vẫn là
-    // thói quen nên tránh. Chỉ decode lại khi đường dẫn ảnh THẬT SỰ đổi (đặt ảnh mới/xoá ảnh).
+    // thói quen nên tránh. Chỉ decode lại khi ảnh THẬT SỰ đổi.
     private var cachedBackgroundBitmap: android.graphics.Bitmap? = null
     private var cachedBackgroundPath: String? = null
+    // SỬA LỖI (người dùng phản ánh: "không thể đổi ảnh" - chọn ảnh khác nhưng bàn phím vẫn
+    // hiện ảnh CŨ): ảnh nền luôn được lưu đè lên ĐÚNG 1 TÊN FILE CỐ ĐỊNH (xem
+    // ThemeSettings.BACKGROUND_IMAGE_FILE_NAME - cố tình làm vậy để tránh tích rác file ảnh cũ
+    // theo thời gian). Nhưng vì tên file/đường dẫn KHÔNG BAO GIỜ đổi dù nội dung ảnh bên trong
+    // đã đổi, điều kiện "imagePath != cachedBackgroundPath" phía dưới trước đây LUÔN LUÔN sai
+    // (false) sau lần đặt ảnh ĐẦU TIÊN - dẫn tới bàn phím không bao giờ đọc lại file, cứ dùng
+    // mãi bitmap cũ đã cache từ lần đặt ảnh đầu tiên, bất kể người dùng đổi ảnh bao nhiêu lần
+    // sau đó. Phải so sánh THÊM thời điểm sửa đổi CUỐI của file (lastModified) - thời điểm này
+    // chắc chắn đổi mỗi lần lưu ảnh mới đè lên, dù tên file vẫn y hệt.
+    private var cachedBackgroundMtime: Long = -1L
 
     private fun applyKeyboardBackground() {
         val imagePath = ThemeSettings.getBackgroundImagePath(this)
@@ -292,13 +302,15 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 cachedBackgroundBitmap?.recycle()
                 cachedBackgroundBitmap = null
                 cachedBackgroundPath = null
+                cachedBackgroundMtime = -1L
             }
             keyboardBody.background = null
             keyboardBody.setBackgroundColor(ThemeSettings.keyboardBackgroundColor(this))
             return
         }
 
-        if (imagePath != cachedBackgroundPath) {
+        val currentMtime = java.io.File(imagePath).lastModified()
+        if (imagePath != cachedBackgroundPath || currentMtime != cachedBackgroundMtime) {
             cachedBackgroundBitmap?.recycle()
             cachedBackgroundBitmap = try {
                 android.graphics.BitmapFactory.decodeFile(imagePath)
@@ -307,6 +319,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 null
             }
             cachedBackgroundPath = imagePath
+            cachedBackgroundMtime = currentMtime
         }
 
         val bitmap = cachedBackgroundBitmap
