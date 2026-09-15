@@ -14,18 +14,36 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Cài JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Cài Android SDK
-        uses: android-actions/setup-android@v3
+      # SỬA LỖI CI: action bên thứ 3 "android-actions/setup-android@v3" đang bị GitHub ép
+      # chạy trên Node.js 24 (GitHub đã khai tử Node 20 từ 19/9/2025 - xem annotation cảnh báo
+      # của chính GitHub trên các lần chạy trước) trong khi action đó viết cho Node 20, nên nó
+      # crash ngay khi khởi động (job fail trong có 23 giây, đúng ngay bước này) - KHÔNG liên
+      # quan gì tới code Kotlin của app. Thay bằng cách tự tải "cmdline-tools" THẲNG TỪ GOOGLE
+      # (không qua action bên thứ 3 nào cả) - cách này không phụ thuộc việc 1 action ngoài có
+      # được tác giả cập nhật kịp theo Node mới hay không nữa.
+      - name: Cài Android SDK (tải thẳng cmdline-tools từ Google, không qua action bên thứ 3)
+        env:
+          ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+        run: |
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          curl -fsSL -o /tmp/cmdline-tools.zip \
+            "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
 
       - name: Chấp nhận license SDK + cài đúng platform 34
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Cài Gradle
         uses: gradle/actions/setup-gradle@v4
