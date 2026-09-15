@@ -130,16 +130,25 @@ class BackgroundImageCropActivity : AppCompatActivity() {
     }
 
     /** Tỉ lệ CHUẨN (rộng/cao) của khung cắt - tính ĐÚNG theo cách bàn phím thật tự dựng kích
-     *  thước của nó (xem SmartKeyboardService.keyRowHeightDp()/utilityRowHeightDp() - 4 hàng
-     *  phím trang chữ mặc định + hàng tiện ích + dải đèn LED trên cùng, ở chế độ đứng), để ảnh
-     *  đặt làm nền vừa khít khung bàn phím thật, không bị kéo giãn/méo khi hiển thị. */
+     *  thước của nó (xem SmartKeyboardService), ở chế độ đứng:
+     *    - Dải đèn LED trên cùng: 5dp (ledStripView)
+     *    - Hàng tiện ích: utilityRowHeightDp() = 38dp CỘNG THÊM 8dp đệm trên/dưới của chính
+     *      hàng đó (buildUtilityRow() setPadding 4dp mỗi cạnh) - THIẾU phần đệm 8dp này là lý
+     *      do trước đây tỉ lệ khung cắt không khớp hẳn với bàn phím thật.
+     *    - Số hàng phím chữ: mặc định 4 hàng (lettersRows), NHƯNG NẾU người dùng đang bật
+     *      "luôn hiện hàng số" (NumberRowSettings) thì bàn phím thật có tới 5 hàng - phải tính
+     *      đúng theo trạng thái BẬT/TẮT hiện tại của cài đặt đó, không giả định cố định 4 hàng
+     *      như bản cũ, nếu không tỉ lệ sẽ lệch hẳn với người đang bật hàng số. */
     private fun keyboardAspectRatio(): Float {
         val widthPx = resources.displayMetrics.widthPixels.toFloat()
         val keyRowHeightDp = 48
-        val utilityRowHeightDp = 38
+        val utilityRowContentHeightDp = 38
+        val utilityRowPaddingDp = 8 // buildUtilityRow(): setPadding(dp(4),dp(4),dp(4),dp(4))
         val ledStripHeightDp = 5
-        val letterRowCount = 4
-        val heightPx = dp(letterRowCount * keyRowHeightDp + utilityRowHeightDp + ledStripHeightDp).toFloat()
+        val letterRowCount = if (NumberRowSettings.isEnabled(this)) 5 else 4
+        val heightDp = ledStripHeightDp + utilityRowContentHeightDp + utilityRowPaddingDp +
+            letterRowCount * keyRowHeightDp
+        val heightPx = dp(heightDp).toFloat()
         return widthPx / heightPx
     }
 
