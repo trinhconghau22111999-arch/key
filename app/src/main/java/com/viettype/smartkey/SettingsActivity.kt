@@ -269,13 +269,15 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     /** Đặt hẳn 1 ảnh làm nền bàn phím thay cho màu Sáng/Tối - bấm nút là mở thư mục/thư viện
-     *  ảnh của máy để chọn, sau đó sang màn cắt (BackgroundImageCropActivity) để CHỌN VÙNG ẢNH
-     *  TỰ DO (không cố định sẵn khung nào), chọn xong áp dụng ngay lên bàn phím thật. */
+     *  ảnh của máy để chọn, sau đó sang màn cắt (BackgroundImageCropActivity) với khung CỐ ĐỊNH
+     *  đúng tỉ lệ bàn phím thật - chỉ di chuyển/phóng to thu nhỏ ẢNH bên trong khung đó, không
+     *  đổi hình dạng khung - chọn xong áp dụng ngay lên bàn phím thật. */
     private fun buildBackgroundImageSection(): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         box.addView(bodyText(
             "Hoặc đặt hẳn 1 ảnh làm nền bàn phím thay cho màu Sáng/Tối ở trên - bấm vào để chọn " +
-                "ảnh rồi tự chọn vùng ảnh muốn dùng, không cố định sẵn khung nào."
+                "ảnh, sau đó kéo để di chuyển và chụm/mở 2 ngón để phóng to/thu nhỏ trong khung " +
+                "cắt đúng tỉ lệ bàn phím."
         ))
 
         val currentPath = ThemeSettings.getBackgroundImagePath(this)
