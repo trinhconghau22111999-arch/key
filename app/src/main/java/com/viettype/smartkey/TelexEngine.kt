@@ -202,17 +202,26 @@ object TelexEngine {
     }
 
     /**
-     * Tìm ký tự GẦN CUỐI TỪ nhất có gốc (bỏ dấu, chữ thường) TRÙNG với
-     * [keyLower] ('a'/'e'/'o') - có thể có ký tự khác (nguyên âm hoặc phụ âm)
-     * xen giữa nó và cuối từ, KHÔNG cần liền kề - rồi biến đổi ký tự đó
-     * (a->â, e->ê, o->ô), KHÔNG nối thêm ký tự vừa gõ (giống hệt cách nhân
-     * đôi liền kề hoạt động: "aa" -> 1 chữ "â" duy nhất).
+     * Tìm ký tự GẦN CUỐI TỪ nhất có LIÊN QUAN tới [keyLower] ('a'/'e'/'o') - có thể có ký tự
+     * khác (nguyên âm hoặc phụ âm) xen giữa nó và cuối từ, KHÔNG cần liền kề - rồi xử lý theo
+     * 1 trong 2 trường hợp:
      *
-     * Dùng cho trường hợp gõ nhân đôi KHÔNG liền kề, ví dụ "nau" + 'a' (lần
-     * 2) -> "nâu" (chữ 'a' đầu tiên được biến đổi, dù có 'u' xen giữa).
+     *   1. Ký tự đó là CHỮ GỐC chưa biến đổi (a/e/o, có thể mang thanh như à/è/ò) -> NHÂN ĐÔI
+     *      thành â/ê/ô (giữ nguyên thanh cũ), KHÔNG nối thêm ký tự vừa gõ - giống hệt cách
+     *      nhân đôi liền kề hoạt động ("aa" -> 1 chữ "â" duy nhất).
+     *      Dùng cho trường hợp gõ nhân đôi KHÔNG liền kề, ví dụ "nau" + 'a' (lần 2) -> "nâu".
      *
-     * Chỉ khớp đúng CHỮ GỐC chưa biến đổi (vd 'a' thường) - KHÔNG khớp với
-     * chính dạng đã có móc/mũ (â/ê/ô), tránh biến đổi lặp lại ký tự đã xong.
+     *   2. Ký tự đó ĐÃ LÀ dạng biến đổi RỒI (â/ê/ô, có thể mang thanh như ồ/ấ/ế...) - tức đây
+     *      là lần gõ THỨ 3 (không liền kề) cho đúng nguyên âm đó -> ESCAPE: hoàn tác ký tự đó
+     *      về chữ gốc (giữ nguyên thanh cũ) NGAY TẠI VỊ TRÍ CŨ, rồi nối thêm CHÍNH ký tự vừa gõ
+     *      vào CUỐI TỪ - đúng quy ước "gõ lần 3 = hoàn tác + gõ thêm" đã dùng ở applyDoubleChar()
+     *      cho trường hợp liền kề, áp dụng tương tự cho trường hợp KHÔNG liền kề.
+     *      SỬA LỖI (người dùng phản ánh: gõ "ngông" rồi gõ thêm "o" phải ra "ngongo" chứ không
+     *      phải "ngôngo"): TRƯỚC ĐÂY trường hợp 2 này hoàn toàn KHÔNG được xử lý - vòng lặp chỉ
+     *      so khớp trường hợp 1 (chữ gốc), gặp chữ ĐÃ biến đổi (như 'ô' trong "ngông") thì bỏ
+     *      qua im lặng, không làm gì - khiến cả hàm trả về null, rồi bị coi như "không có Telex
+     *      nào áp dụng" nên chữ 'o' vừa gõ chỉ được nối thẳng vào cuối như ký tự thường, để lại
+     *      nguyên chữ 'ô' cũ không hoàn tác - ra "ngôngo" thay vì "ngongo".
      */
     private fun transformLastVowelWithDoubleLetter(word: String, keyLower: Char, keyIsUpper: Boolean): String? {
         val replacement: Char = when (keyLower) {
@@ -220,13 +229,26 @@ object TelexEngine {
             else -> return null
         }
         for (i in word.indices.reversed()) {
-            val c    = word[i]
-            val base = stripTone(c).lowercaseChar()
-            if (base == keyLower) {
+            val c = word[i]
+            val bareLower = stripTone(c).lowercaseChar() // chữ gốc, bỏ thanh điệu, chữ thường
+
+            if (bareLower == keyLower) {
+                // Trường hợp 1: chữ gốc CHƯA biến đổi - nhân đôi thành â/ê/ô tại chỗ.
                 val cased = if (c.isUpperCase() || keyIsUpper) replacement.uppercaseChar() else replacement
                 val tone  = extractTone(c)
                 val fin   = if (tone != Tone.NONE) applyToneToChar(cased, tone) else cased
                 return word.substring(0, i) + fin + word.substring(i + 1)
+            }
+
+            if (bareLower == replacement) {
+                // Trường hợp 2 (MỚI SỬA): chữ ĐÃ biến đổi rồi (â/ê/ô, có thể mang thanh) - hoàn
+                // tác về chữ gốc TẠI VỊ TRÍ CŨ (giữ nguyên thanh đang có), rồi nối thêm chính
+                // ký tự vừa gõ vào CUỐI TỪ.
+                val tone = extractTone(c)
+                val restoredCased = if (c.isUpperCase()) keyLower.uppercaseChar() else keyLower
+                val restored = applyToneToChar(restoredCased, tone)
+                val appended = if (keyIsUpper) keyLower.uppercaseChar() else keyLower
+                return word.substring(0, i) + restored + word.substring(i + 1) + appended
             }
         }
         return null
