@@ -35,8 +35,6 @@ object ScanHistoryStore {
             .apply()
     }
 
-    private val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-
     fun addEntry(context: Context, content: String) {
         val prefs = prefs(context)
         val list = getEntries(context).toMutableList()

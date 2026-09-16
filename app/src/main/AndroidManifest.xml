@@ -67,9 +67,16 @@
         </activity>
 
         <!-- Màn cắt vùng ảnh tự do khi đặt hình nền bàn phím - mở từ SettingsActivity ngay
-             sau khi người dùng chọn xong 1 ảnh bất kỳ từ thư viện/thư mục máy. -->
+             sau khi người dùng chọn xong 1 ảnh bất kỳ từ thư viện/thư mục máy.
+             screenOrientation="portrait": khoá luôn hướng đứng - keyboardAspectRatio() trong
+             Activity này tính tỉ lệ khung cắt theo ĐÚNG kích thước bàn phím thật ở CHẾ ĐỘ ĐỨNG
+             (bàn phím dùng kích thước hàng nhỏ hơn hẳn khi xoay ngang - xem isLandscape() trong
+             SmartKeyboardService). Nếu để màn này tự xoay theo máy, xoay ngang lúc đang cắt sẽ
+             khiến tỉ lệ khung tính SAI (dùng widthPixels của chế độ ngang nhưng vẫn cộng chiều
+             cao hàng phím của chế độ đứng) - khoá đứng loại bỏ hẳn khả năng xảy ra sai lệch này. -->
         <activity
             android:name=".BackgroundImageCropActivity"
+            android:screenOrientation="portrait"
             android:exported="false" />
 
         <!-- Dịch vụ bàn phím (Input Method Service) -->

@@ -187,8 +187,18 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
         keyboardBody = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            // Màu tạm lúc mới dựng view - applyKeyboardBackground() ngay bên dưới sẽ ghi đè lại
+            // ngay (đúng ảnh nền tuỳ chỉnh nếu đang đặt, hoặc giữ nguyên màu này nếu không).
             setBackgroundColor(ThemeSettings.keyboardBackgroundColor(this@SmartKeyboardService))
         }
+        // SỬA LỖI: onCreateInputView() còn được gọi lại MỖI LẦN XOAY MÀN HÌNH (xem
+        // onConfigurationChanged() bên dưới - setInputView(onCreateInputView())), trước đây hàm
+        // này CHỈ set màu Sáng/Tối tĩnh ở trên mà KHÔNG gọi applyKeyboardBackground() - nên nếu
+        // đang đặt ẢNH làm nền, ảnh sẽ BIẾN MẤT TẠM THỜI ngay sau khi xoay máy (quay về màu
+        // Sáng/Tối) cho tới khi người dùng chuyển sang ô nhập khác (mới trigger refreshTheme()
+        // qua onStartInputView()). Gọi thẳng applyKeyboardBackground() ở đây để ảnh nền (nếu có)
+        // luôn đúng ngay từ lần dựng view đầu tiên, kể cả sau khi xoay màn hình.
+        applyKeyboardBackground()
 
         ledStripView = View(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(5))
@@ -281,6 +291,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     // chục lần/phiên thay vì hàng nghìn lần/giây nên không gây giật NGAY LẬP TỨC, nhưng vẫn là
     // thói quen nên tránh. Chỉ decode lại khi ảnh THẬT SỰ đổi.
     private var cachedBackgroundBitmap: android.graphics.Bitmap? = null
+    private var cachedBackgroundDrawable: android.graphics.drawable.BitmapDrawable? = null
     private var cachedBackgroundPath: String? = null
     // SỬA LỖI (người dùng phản ánh: "không thể đổi ảnh" - chọn ảnh khác nhưng bàn phím vẫn
     // hiện ảnh CŨ): ảnh nền luôn được lưu đè lên ĐÚNG 1 TÊN FILE CỐ ĐỊNH (xem
@@ -301,6 +312,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             if (cachedBackgroundBitmap != null) {
                 cachedBackgroundBitmap?.recycle()
                 cachedBackgroundBitmap = null
+                cachedBackgroundDrawable = null
                 cachedBackgroundPath = null
                 cachedBackgroundMtime = -1L
             }
@@ -318,16 +330,21 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 CrashLogger.log(this, "SmartKeyboardService: loi doc anh nen", e)
                 null
             }
+            // TOI UU (nguoi dung yeu cau ra soat "code thua"): BitmapDrawable chi la 1 "vo boc"
+            // mong quanh bitmap - truoc day tao MOI vo boc nay o MOI LAN goi applyKeyboardBackground()
+            // (tuc moi lan ban phim hien len), DU bitmap ben trong khong doi gi ca (cache hit).
+            // Gio chi tao lai vo boc nay CUNG LUC voi luc thuc su decode lai bitmap MOI.
+            cachedBackgroundDrawable = cachedBackgroundBitmap?.let { android.graphics.drawable.BitmapDrawable(resources, it) }
             cachedBackgroundPath = imagePath
             cachedBackgroundMtime = currentMtime
         }
 
-        val bitmap = cachedBackgroundBitmap
-        if (bitmap != null) {
+        val drawable = cachedBackgroundDrawable
+        if (drawable != null) {
             // BitmapDrawable mặc định co giãn LẤP ĐẦY toàn bộ bounds của View chứa nó (gravity
             // FILL) - ảnh đã được người dùng tự cắt đúng vùng muốn dùng ở màn chọn ảnh nên co
             // giãn vừa khít khung bàn phím là đúng ý, không cần crop/scale thêm gì ở đây nữa.
-            keyboardBody.background = android.graphics.drawable.BitmapDrawable(resources, bitmap)
+            keyboardBody.background = drawable
         } else {
             // Lỡ đọc file lỗi (file hỏng/bị xoá giữa chừng) - không để bàn phím trống trơn
             // không có nền gì cả, quay về màu Sáng/Tối làm phương án dự phòng an toàn.
@@ -454,7 +471,17 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     // ============================== HÀNG TIỆN ÍCH TRÊN CÙNG ==============================
 
+    // TOI UU (nguoi dung yeu cau ra soat lai "code thua"): ThemeSettings.hasBackgroundImage()
+    // doc SharedPreferences + goi File.exists() (1 syscall stat that su). TRUOC DAY moi PHIM
+    // tu goi rieng ham nay de biet co nen to mau hay khong - ma 1 lan rebuildKeyRows() dung tren
+    // ~35-40 phim, nghia la lap lai DUNG 1 CAU TRA LOI (co anh nen hay khong) toi 35-40 lan, moi
+    // lan 1 syscall stat() rieng - trong khi cau tra loi KHONG THE doi giua cac phim trong CUNG
+    // 1 lan dung lai. Cache lai 1 LAN duy nhat o dau rebuildKeyRows()/buildUtilityRow(), dung
+    // lai cho toan bo cac phim trong lan dung do.
+    private var cachedHasBackgroundImage = false
+
     private fun buildUtilityRow(): View {
+        cachedHasBackgroundImage = ThemeSettings.hasBackgroundImage(this)
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
@@ -480,7 +507,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
             textSize = 14f * keyTextSizeScale()
             layoutParams = LinearLayout.LayoutParams(0, dp(utilityRowHeightDp()), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) }
-            val keyBackground = LedKeyDrawable(dp(6).toFloat(), ThemeSettings.effectiveUtilityButtonFillColor(this@SmartKeyboardService)).apply {
+            val keyBackground = LedKeyDrawable(dp(6).toFloat(), if (cachedHasBackgroundImage) Color.TRANSPARENT else ThemeSettings.utilityButtonBackgroundColor(this@SmartKeyboardService)).apply {
                 // SỬA LỖI (người dùng phản ánh: "4 phím phía trên không có viền"): 4 phím ở hàng
                 // tiện ích (🌐/QR/🎤/123) trước đây KHÔNG hề được thêm vào ledKeySlots - chỉ các
                 // phím do buildKey() tạo (những hàng chữ/số phía dưới) mới có, nên hiệu ứng viền
@@ -537,6 +564,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     )
 
     private fun rebuildKeyRows() {
+        cachedHasBackgroundImage = ThemeSettings.hasBackgroundImage(this)
         rowsHost.removeAllViews()
         letterKeyViews.clear()
         ledKeySlots.clear() // phím cũ đã bị gỡ khỏi cây view - bỏ hết khe viền cũ, tránh vẽ vào phím đã mất
@@ -651,7 +679,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         val weight = weightOverride ?: if (code == "SPACE") 4f else 1f
         val label = displayLabelFor(code)
 
-        val keyBackground = LedKeyDrawable(dp(6).toFloat(), ThemeSettings.effectiveKeyFillColor(this@SmartKeyboardService)).apply {
+        val keyBackground = LedKeyDrawable(dp(6).toFloat(), if (cachedHasBackgroundImage) Color.TRANSPARENT else ThemeSettings.keyBackgroundColor(this@SmartKeyboardService)).apply {
             // Viền bắt đầu trong suốt, độ dày 0 - hiệu ứng RGB chạy (nếu đang BẬT) sẽ tự
             // set màu + độ dày viền theo thời gian thực, xem startLedAnimationIfNeeded().
             setStrokeLive(0, Color.TRANSPARENT)

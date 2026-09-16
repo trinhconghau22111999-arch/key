@@ -68,29 +68,21 @@ object ThemeSettings {
     fun keyboardBackgroundColor(context: Context): Int =
         if (isDarkTheme(context)) 0xFF1A0F2E.toInt() else 0xFFEDEAF5.toInt()
 
-    /** Màu nền của từng phím riêng lẻ. */
+    /** Màu nền của từng phím riêng lẻ - CHỈ dùng khi chưa đặt ảnh nền tuỳ chỉnh; nơi gọi (xem
+     *  SmartKeyboardService.buildKey()) tự kiểm tra [hasBackgroundImage] và dùng Color.TRANSPARENT
+     *  thay vào khi có ảnh nền - không đặt logic đó ở đây để tránh mỗi phím tự gọi lại
+     *  [hasBackgroundImage] (đọc SharedPreferences + File.exists()) ~35-40 lần/lần dựng phím. */
     fun keyBackgroundColor(context: Context): Int =
         if (isDarkTheme(context)) 0xFF2A1F4A.toInt() else 0xFFFFFFFF.toInt()
-
-    /** Màu TÔ NỀN THỰC SỰ dùng khi vẽ từng phím (khác với [keyBackgroundColor] ở trên) - khi
-     *  người dùng đã đặt ẢNH làm nền bàn phím thì phím KHÔNG được tô màu nền đè lên ảnh nữa,
-     *  phải để TRONG SUỐT để thấy xuyên qua đúng ảnh nền phía sau, chỉ còn viền LED (nếu hiệu
-     *  ứng đang chạy) + chữ trên phím là còn hiện. Không có ảnh nền thì tô màu như bình thường. */
-    fun effectiveKeyFillColor(context: Context): Int =
-        if (hasBackgroundImage(context)) Color.TRANSPARENT else keyBackgroundColor(context)
 
     /** Màu chữ/icon trên phím. */
     fun keyTextColor(context: Context): Int =
         if (isDarkTheme(context)) Color.WHITE else 0xFF1A0F2E.toInt()
 
-    /** Màu nền các nút tiện ích (🌐, QR, 🎤, 123) ở hàng trên cùng. */
+    /** Màu nền các nút tiện ích (🌐, QR, 🎤, 123) ở hàng trên cùng - cùng lưu ý như
+     *  [keyBackgroundColor] ở trên về việc không tự kiểm tra ảnh nền ở đây. */
     fun utilityButtonBackgroundColor(context: Context): Int =
         if (isDarkTheme(context)) Color.parseColor("#332A1F4A") else Color.parseColor("#14000000")
-
-    /** Như [effectiveKeyFillColor] nhưng cho hàng tiện ích - cùng lý do: có ảnh nền thì trong
-     *  suốt để thấy ảnh, không có ảnh nền thì tô màu như bình thường. */
-    fun effectiveUtilityButtonFillColor(context: Context): Int =
-        if (hasBackgroundImage(context)) Color.TRANSPARENT else utilityButtonBackgroundColor(context)
 
     // ============================== HÌNH NỀN TUỲ CHỌN (ẢNH) ==============================
 

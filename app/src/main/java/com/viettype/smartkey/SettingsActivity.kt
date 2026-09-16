@@ -459,7 +459,18 @@ class SettingsActivity : AppCompatActivity() {
                     if (fromUser) LedEffectSettings.setSpeedPercent(this@SettingsActivity, progress)
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                // SỬA LỖI: mọi lựa chọn LED khác (bật/tắt, Nhiều màu/1 màu, hướng chạy) đều gọi
+                // rebuildAll(forceKeyboardRestart = true) để khối "Xem trước bàn phím" tắt/bật
+                // lại ngay, thấy được thay đổi tức thì - riêng thanh trượt TỐC ĐỘ này trước đây
+                // KHÔNG hề gọi, nên kéo xong tốc độ mới KHÔNG hiện ra ở khối xem trước cho tới
+                // khi rời khỏi màn Cài đặt rồi quay lại (vòng lặp hiệu ứng LED trong bàn phím
+                // thật chỉ đọc tốc độ 1 LẦN lúc animator bắt đầu chạy - xem cycleDurationMs()
+                // trong startLedAnimationIfNeeded() - không tự cập nhật giữa chừng). Gọi refresh
+                // ở đây (lúc BUÔNG tay, không phải mỗi lần kéo) để vừa thấy ngay kết quả vừa
+                // không bị giật màn hình liên tục trong lúc đang kéo.
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    rebuildAll(forceKeyboardRestart = true)
+                }
             })
         })
         return box
