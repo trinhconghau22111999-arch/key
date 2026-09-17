@@ -933,6 +933,15 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         return textBefore.substring(start)
     }
 
+    // SỬA LỖI (người dùng phản ánh: gõ "ngông"->"ngongo" [đã sửa lần trước, xem
+    // TelexEngine.transformLastVowelWithDoubleLetter], rồi gõ thêm "f" thì phải ra "ngongof"
+    // chứ không phải "ngòngo" - tức không được bỏ dấu nữa): mỗi khi 1 phím Telex kích hoạt
+    // ESCAPE (gõ lặp lại phím biến đổi để hoàn tác về chữ gốc - dấu hiệu người dùng không còn
+    // muốn từ này biến đổi kiểu tiếng Việt nữa), nhớ lại ở đây rồi TẮT HẲN Telex cho phần CÒN
+    // LẠI của từ đó - không cần dạy TelexEngine "hiểu" thế nào là 1 âm tiết tiếng Việt hợp lệ
+    // (phức tạp, dễ sai), chỉ cần 1 lần escape là đủ tín hiệu dừng hẳn.
+    private var currentWordEscaped = false
+
     private fun handleLetterOrSymbolKey(rawChar: Char) {
         val ic = currentInputConnection ?: return
         val locale = LocaleSettings.getCurrentLocale(this)
@@ -947,12 +956,20 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
         if (rawChar.isLetter() && locale.usesTelex && currentPage != Page.SYMBOLS2) {
             val wordBefore = getCurrentWordBuffer()
-            val transformed = TelexEngine.applyKey(wordBefore, typedChar)
-            if (transformed != null) {
-                ic.deleteSurroundingText(wordBefore.length, 0)
-                ic.commitText(transformed, 1)
-                afterCharacterCommitted(isLetter = true)
-                return
+            // Từ đang gõ RỖNG nghĩa là vừa bắt đầu 1 từ MỚI (sau dấu cách/dấu câu/xuống dòng,
+            // hoặc mới mở ô nhập) - luôn reset cờ escape của từ TRƯỚC, không để nó ảnh hưởng
+            // nhầm sang từ hoàn toàn khác.
+            if (wordBefore.isEmpty()) currentWordEscaped = false
+
+            if (!currentWordEscaped) {
+                val transformed = TelexEngine.applyKey(wordBefore, typedChar)
+                if (transformed != null) {
+                    if (transformed.wasEscape) currentWordEscaped = true
+                    ic.deleteSurroundingText(wordBefore.length, 0)
+                    ic.commitText(transformed.newWord, 1)
+                    afterCharacterCommitted(isLetter = true)
+                    return
+                }
             }
         }
 

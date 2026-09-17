@@ -56,14 +56,35 @@ object TelexEngine {
     //  API chính
     // =========================================================================
 
+    /** Kết quả xử lý 1 phím Telex. [newWord] là chuỗi thay thế hoàn chỉnh cho cả từ đang gõ.
+     *  [wasEscape] = true khi đây là 1 lần "escape" (gõ LẶP LẠI phím biến đổi để HOÀN TÁC về
+     *  chữ gốc - dấu hiệu người dùng KHÔNG muốn từ này tiếp tục biến đổi kiểu tiếng Việt nữa,
+     *  ví dụ đang gõ xen từ tiếng Anh/tên riêng). Nơi gọi (SmartKeyboardService) dùng cờ này để
+     *  nhớ "từ hiện tại đã escape", tắt hẳn Telex cho phần CÒN LẠI của từ đó - xem giải thích
+     *  đầy đủ ở [applyKey]. */
+    data class TelexResult(val newWord: String, val wasEscape: Boolean)
+
     /**
      * Xử lý phím [rawKey] vừa gõ khi từ đang gõ dở là [wordBefore].
      *
-     * Trả về CHUỖI THAY THẾ HOÀN CHỈNH (xoá wordBefore cũ, ghi cái này) nếu
-     * có biến đổi Telex. Trả về null nếu phím này không kích hoạt biến đổi gì
-     * -> nơi gọi cứ nối ký tự vào bình thường.
+     * Trả về [TelexResult] (chuỗi thay thế hoàn chỉnh + có phải escape hay không) nếu có biến
+     * đổi Telex. Trả về null nếu phím này không kích hoạt biến đổi gì -> nơi gọi cứ nối ký tự
+     * vào bình thường.
+     *
+     * SỬA LỖI (người dùng phản ánh: gõ "ngông" -> gõ thêm "o" ra "ngongo" [đã sửa ở lần trước]
+     * -> gõ thêm "f" thì phải ra "ngongof" chứ không phải "ngòngo" - tức KHÔNG được bỏ dấu nữa):
+     * Chữ 'f' (thanh huyền) trước đây LUÔN cố áp thanh điệu vào 1 nguyên âm nào đó tìm thấy
+     * trong cả TỪ, không quan tâm từ đó có còn "giống tiếng Việt" hay không sau khi người dùng
+     * đã escape (thoát Telex) 1 phần của nó - "ngongo" không phải 1 âm tiết tiếng Việt hợp lệ
+     * (2 nguyên âm 'o' tách rời bởi "ng" ở giữa, không phải 1 cụm nguyên âm), nhưng
+     * pickToneTarget() vẫn máy móc chọn đại 1 nguyên âm ('o' đầu) để gắn dấu vào, cho ra kết
+     * quả vô nghĩa "ngòngo". Việc TRẢ VỀ [TelexResult] có cờ [TelexResult.wasEscape] ở đây cho
+     * phép nơi gọi GHI NHỚ "đã escape trong từ này" và tự động BỎ QUA hẳn việc gọi [applyKey]
+     * cho các phím tiếp theo trong CÙNG từ đó - không cần dạy hàm này "hiểu" thế nào là 1 âm
+     * tiết tiếng Việt hợp lệ (phức tạp, dễ sai), chỉ cần 1 lần escape là đủ tín hiệu "từ này
+     * không còn là tiếng Việt nữa, đừng động vào nữa".
      */
-    fun applyKey(wordBefore: String, rawKey: Char): String? {
+    fun applyKey(wordBefore: String, rawKey: Char): TelexResult? {
         if (wordBefore.isEmpty()) return null
 
         val keyLower    = rawKey.lowercaseChar()
@@ -81,12 +102,14 @@ object TelexEngine {
         // chữ 'z' biến mất không dấu vết (gõ mà không thấy chữ nào ra). Giờ trong
         // trường hợp đó tự chèn thẳng ký tự 'z' vào cuối từ, giống hệt gõ 1 chữ cái
         // thường (không có Telex nào cần escape ở đây vì z không dùng để tạo dấu).
+        // 'z' là phím XOÁ DẤU CHỦ ĐỘNG (không phải gõ lặp lại 1 phím biến đổi) nên
+        // KHÔNG tính là escape - người gõ 'z' vẫn có thể đang gõ tiếp tiếng Việt.
         if (keyLower == 'z') {
             val stripped = applyToneToWord(wordBefore, Tone.NONE)
             return if (stripped != null && stripped != wordBefore) {
-                stripped
+                TelexResult(stripped, wasEscape = false)
             } else {
-                wordBefore + rawKey
+                TelexResult(wordBefore + rawKey, wasEscape = false)
             }
         }
 
@@ -127,19 +150,19 @@ object TelexEngine {
      *   phím gốc để thoát Telex (vd "tẽx" -> "tex").
      * - Ngược lại -> áp thanh mới.
      */
-    private fun applyTone(word: String, tone: Tone, keyLower: Char, rawKey: Char): String? {
+    private fun applyTone(word: String, tone: Tone, keyLower: Char, rawKey: Char): TelexResult? {
         val vowelIndices = findVowelIndices(word)
         if (vowelIndices.isEmpty()) return null   // không có nguyên âm -> gõ thẳng
 
         val currentTone = getWordTone(word, vowelIndices)
 
-        return if (currentTone == tone) {
+        if (currentTone == tone) {
             // Gõ lần 2 cùng phím -> escape: xoá thanh + thêm ký tự phím đó
             val stripped = stripToneFromWord(word, vowelIndices)
-            stripped + rawKey
-        } else {
-            applyToneToWord(word, tone)
+            return TelexResult(stripped + rawKey, wasEscape = true)
         }
+        val applied = applyToneToWord(word, tone) ?: return null
+        return TelexResult(applied, wasEscape = false)
     }
 
     private fun getWordTone(word: String, vowelIndices: List<Int>): Tone {
@@ -176,7 +199,7 @@ object TelexEngine {
      *   - Nếu ký tự cuối ĐÃ là phiên bản biến đổi (â, ê, ô, đ) -> escape:
      *     xoá biến đổi + thêm ký tự bình thường (ví dụ âa -> aa).
      */
-    private fun applyDoubleChar(word: String, keyLower: Char, keyIsUpper: Boolean): String? {
+    private fun applyDoubleChar(word: String, keyLower: Char, keyIsUpper: Boolean): TelexResult? {
         val lastChar     = word.last()
         val lastBase     = stripTone(lastChar).lowercaseChar()
         val existingTone = extractTone(lastChar)
@@ -187,7 +210,8 @@ object TelexEngine {
             // Hoàn tác: đổi ký tự biến đổi về ký tự gốc + nối phím gõ thêm
             val plainChar = if (lastChar.isUpperCase()) keyLower.uppercaseChar() else keyLower
             val restoredBase = applyToneToChar(plainChar, existingTone)
-            return word.dropLast(1) + restoredBase + (if (keyIsUpper) keyLower.uppercaseChar() else keyLower)
+            val result = word.dropLast(1) + restoredBase + (if (keyIsUpper) keyLower.uppercaseChar() else keyLower)
+            return TelexResult(result, wasEscape = true)
         }
 
         if (lastBase != keyLower) return null
@@ -198,7 +222,7 @@ object TelexEngine {
         }
         val cased     = if (lastChar.isUpperCase() || keyIsUpper) replacement.uppercaseChar() else replacement
         val finalChar = if (existingTone != Tone.NONE) applyToneToChar(cased, existingTone) else cased
-        return word.dropLast(1) + finalChar
+        return TelexResult(word.dropLast(1) + finalChar, wasEscape = false)
     }
 
     /**
@@ -223,7 +247,7 @@ object TelexEngine {
      *      nào áp dụng" nên chữ 'o' vừa gõ chỉ được nối thẳng vào cuối như ký tự thường, để lại
      *      nguyên chữ 'ô' cũ không hoàn tác - ra "ngôngo" thay vì "ngongo".
      */
-    private fun transformLastVowelWithDoubleLetter(word: String, keyLower: Char, keyIsUpper: Boolean): String? {
+    private fun transformLastVowelWithDoubleLetter(word: String, keyLower: Char, keyIsUpper: Boolean): TelexResult? {
         val replacement: Char = when (keyLower) {
             'a' -> 'â'; 'e' -> 'ê'; 'o' -> 'ô'
             else -> return null
@@ -237,7 +261,7 @@ object TelexEngine {
                 val cased = if (c.isUpperCase() || keyIsUpper) replacement.uppercaseChar() else replacement
                 val tone  = extractTone(c)
                 val fin   = if (tone != Tone.NONE) applyToneToChar(cased, tone) else cased
-                return word.substring(0, i) + fin + word.substring(i + 1)
+                return TelexResult(word.substring(0, i) + fin + word.substring(i + 1), wasEscape = false)
             }
 
             if (bareLower == replacement) {
@@ -248,7 +272,7 @@ object TelexEngine {
                 val restoredCased = if (c.isUpperCase()) keyLower.uppercaseChar() else keyLower
                 val restored = applyToneToChar(restoredCased, tone)
                 val appended = if (keyIsUpper) keyLower.uppercaseChar() else keyLower
-                return word.substring(0, i) + restored + word.substring(i + 1) + appended
+                return TelexResult(word.substring(0, i) + restored + word.substring(i + 1) + appended, wasEscape = true)
             }
         }
         return null
@@ -265,7 +289,7 @@ object TelexEngine {
      *   - Escape: nếu cuối từ đã là ă/ơ/ư -> hoàn tác về a/o/u + thêm 'w'
      *   - ow đặc biệt: xử lý cả trường hợp 'o' nằm giữa cụm (trongo -> trông)
      */
-    private fun applyW(word: String, keyIsUpper: Boolean): String? {
+    private fun applyW(word: String, keyIsUpper: Boolean): TelexResult? {
         val lastChar     = word.last()
         val lastBase     = stripTone(lastChar).lowercaseChar()
         val existingTone = extractTone(lastChar)
@@ -276,14 +300,15 @@ object TelexEngine {
             val originalChar = escapeMap[lastBase]!!
             val restoredChar = if (lastChar.isUpperCase()) originalChar.uppercaseChar() else originalChar
             val restored = applyToneToChar(restoredChar, existingTone)
-            return word.dropLast(1) + restored + (if (keyIsUpper) 'W' else 'w')
+            val result = word.dropLast(1) + restored + (if (keyIsUpper) 'W' else 'w')
+            return TelexResult(result, wasEscape = true)
         }
 
         // aw -> ă
         if (lastBase == 'a') {
             val rep = if (lastChar.isUpperCase()) 'Ă' else 'ă'
             val fin = if (existingTone != Tone.NONE) applyToneToChar(rep, existingTone) else rep
-            return word.dropLast(1) + fin
+            return TelexResult(word.dropLast(1) + fin, wasEscape = false)
         }
 
         // ow -> ơ  (kể cả khi 'o' không phải ký tự cuối - ví dụ "trong" + w -> "trơng"?
@@ -297,7 +322,7 @@ object TelexEngine {
             // "phương"): cum "uo" bien thanh "ươ" phai doi CA 2 chu (u->ư VA
             // o->ơ) chu khong chi rieng o->ơ - xem [alsoConvertPrecedingUIfNeeded].
             alsoConvertPrecedingUIfNeeded(chars, chars.size - 1)
-            return String(chars)
+            return TelexResult(String(chars), wasEscape = false)
         }
 
         // uw -> ư (và nhungw -> nhưng: 'u' không phải ký tự cuối nhưng cuối là phụ âm)
@@ -314,18 +339,19 @@ object TelexEngine {
                 val rep = if (prevChar.isUpperCase()) 'Ư' else 'ư'
                 val tone = extractTone(prevChar)
                 chars[lastIdx - 1] = if (tone != Tone.NONE) applyToneToChar(rep, tone) else rep
-                return String(chars)
+                return TelexResult(String(chars), wasEscape = false)
             }
             val rep = if (lastChar.isUpperCase()) 'Ư' else 'ư'
             val fin = if (existingTone != Tone.NONE) applyToneToChar(rep, existingTone) else rep
-            return word.dropLast(1) + fin
+            return TelexResult(word.dropLast(1) + fin, wasEscape = false)
         }
 
         // 'w' sau phụ âm cuối: tìm nguyên âm o/u gần nhất từ cuối, biến đổi nó
         // Ví dụ: "trong" + w -> "trông", "nhung" + w -> "nhưng"
         // Nếu nguyên âm cuối là a/e/i/y (vd "tat","set") -> không áp w, trả null
         // để 'w' được gõ thẳng ra như ký tự bình thường, tránh chèn 'ư' nhầm.
-        return transformLastVowelWithW(word, keyIsUpper)
+        val deferred = transformLastVowelWithW(word, keyIsUpper) ?: return null
+        return TelexResult(deferred, wasEscape = false)
     }
 
     /**
