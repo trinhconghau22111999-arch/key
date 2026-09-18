@@ -381,34 +381,47 @@ object TelexEngine {
      * Chỉ áp dụng khi nguyên âm đó KHÔNG phải ký tự cuối (tức sau nó còn phụ âm) -
      * trường hợp nguyên âm là ký tự cuối đã được xử lý riêng ở applyW() phía trên.
      */
+    /**
+     * SỬA LỖI (người dùng phản ánh: gõ "guiwr" ra "guỉw" thay vì "gửi"): TRƯỚC ĐÂY vòng lặp
+     * tìm ngược trong từ, hễ gặp NGUYÊN ÂM ĐẦU TIÊN không đủ điều kiện áp 'w' (không phải a/o/u,
+     * hoặc đang ở đúng vị trí cuối từ) là `return null` LUÔN - thoát HẲN khỏi hàm, không tìm
+     * tiếp các vị trí xa hơn về phía trước nữa. Với từ "gui" (g,u,i), gõ 'w' thì ký tự GẶP ĐẦU
+     * TIÊN (quét từ cuối) là 'i' - không đủ điều kiện (i không có dạng biến đổi qua 'w') - hàm
+     * thoát ngay tại đây, KHÔNG BAO GIỜ đi tiếp tới 'u' ở vị trí trước đó (dù 'u' hoàn toàn hợp
+     * lệ để biến thành 'ư'). Kết quả: 'w' không làm gì cả, bị gõ thẳng ra như ký tự thường ->
+     * "guiw", rồi phím 'r' (dấu hỏi) tìm nguyên âm trong "guiw" (không có 'ư') nên áp nhầm dấu
+     * hỏi vào 'u' hoặc 'i' -> ra kết quả sai "guỉw"/tương tự, không phải "gửi".
+     *
+     * Sửa: đổi các `return null` giữa chừng vòng lặp thành `continue` - GẶP nguyên âm không
+     * đủ điều kiện thì chỉ BỎ QUA vị trí đó, tiếp tục tìm NGƯỢC XA HƠN về đầu từ, chỉ thật sự
+     * bỏ cuộc (return null) khi đã quét hết cả từ mà không tìm được nguyên âm nào hợp lệ.
+     */
     private fun transformLastVowelWithW(word: String, keyIsUpper: Boolean): String? {
         for (i in word.indices.reversed()) {
             val c    = word[i]
             val base = stripTone(c).lowercaseChar()
-            if (base in ALL_VOWELS) {
-                // Chỉ áp w khi nguyên âm này không phải ký tự cuối (còn phụ âm theo sau)
-                if (i == word.length - 1) return null
-                val rep: Char = when (base) {
-                    'a'  -> if (c.isUpperCase()) 'Ă' else 'ă'
-                    'o'  -> if (c.isUpperCase()) 'Ơ' else 'ơ'
-                    'u'  -> if (c.isUpperCase()) 'Ư' else 'ư'
-                    else -> return null  // e/i/y không có dạng w tương ứng
-                }
-                val tone = extractTone(c)
-                val fin  = if (tone != Tone.NONE) applyToneToChar(rep, tone) else rep
-                val chars = word.toCharArray()
-                chars[i] = fin
-                // SUA LOI (nguoi dung phan anh: "phuongw" ra "phuơng" thay vi
-                // "phương"): cum "uo" (vd "phuong") phai doi CA 2 chu u->ư
-                // VA o->ơ - khong chi rieng chu tim thay. Ap dung ca khi chu
-                // tim thay la 'o' (uo->ươ) lan 'u' (uu->ưu, truong hop hiem
-                // co phu am theo sau) de nhat quan voi 2 nhanh truc tiep o
-                // tren ([applyW]).
-                if (base == 'o' || base == 'u') {
-                    alsoConvertPrecedingUIfNeeded(chars, i)
-                }
-                return String(chars)
+            val rep: Char = when (base) {
+                'a'  -> if (c.isUpperCase()) 'Ă' else 'ă'
+                'o'  -> if (c.isUpperCase()) 'Ơ' else 'ơ'
+                'u'  -> if (c.isUpperCase()) 'Ư' else 'ư'
+                // Không phải a/o/u (kể cả e/i/y hay phụ âm) - bỏ qua VỊ TRÍ NÀY thôi, tìm
+                // tiếp lên các ký tự PHÍA TRƯỚC nó, không thoát hẳn khỏi hàm ở đây.
+                else -> continue
             }
+            val tone = extractTone(c)
+            val fin  = if (tone != Tone.NONE) applyToneToChar(rep, tone) else rep
+            val chars = word.toCharArray()
+            chars[i] = fin
+            // SUA LOI (nguoi dung phan anh: "phuongw" ra "phuơng" thay vi
+            // "phương"): cum "uo" (vd "phuong") phai doi CA 2 chu u->ư
+            // VA o->ơ - khong chi rieng chu tim thay. Ap dung ca khi chu
+            // tim thay la 'o' (uo->ươ) lan 'u' (uu->ưu, truong hop hiem
+            // co phu am theo sau) de nhat quan voi 2 nhanh truc tiep o
+            // tren ([applyW]).
+            if (base == 'o' || base == 'u') {
+                alsoConvertPrecedingUIfNeeded(chars, i)
+            }
+            return String(chars)
         }
         return null
     }
