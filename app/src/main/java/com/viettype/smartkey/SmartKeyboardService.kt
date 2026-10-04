@@ -38,6 +38,13 @@ import androidx.lifecycle.LifecycleRegistry
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.barcode.BarcodeScanner
+import android.media.AudioManager
+import android.os.SystemClock
+import android.view.inputmethod.EditorInfo
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Bàn phím tiếng Việt (Telex) + tiếng Anh, có thêm 2 tiện ích đặc trưng ngay
@@ -62,6 +69,44 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private var lastShiftTapAt = 0L
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private companion object {
+        /** [Mục 16] Trong khoảng này sau 1 thao tác gõ của CHÍNH bàn phím, mọi onUpdateSelection
+         *  được coi là do mình gây ra (không phải người dùng/app đích tự đổi con trỏ). */
+        const val SELF_EDIT_WINDOW_MS = 300L
+        /** [Mục 17] Độ dài tối đa của bộ đệm từ đang gõ (giữ đúng mức 30 ký tự như cách đọc cũ). */
+        const val WORD_BUFFER_MAX = 30
+        /** [Mục 3] Thời gian "nghỉ" sau khi xuất mã / sau khi bỏ qua mã bị chặn, trước khi nhận khung mới. */
+        const val SCAN_REARM_DELIVERED_MS = 1500L
+        const val SCAN_REARM_IGNORED_MS = 1000L
+    }
+
+    // [Mục 13] Handler RIÊNG cho timer phím (giữ Backspace lặp xoá, nhấn giữ hiện popup dấu) -
+    // tách khỏi mainHandler để khi bàn phím ẩn có thể huỷ sạch đúng nhóm timer này.
+    private val keyTimerHandler = Handler(Looper.getMainLooper())
+
+    // [Mục 13] Bong bóng chữ / popup ký tự phụ đang hiện - dọn sạch khi bàn phím ẩn.
+    private val transientKeyViews = mutableSetOf<View>()
+
+    // [Mục 17] Bộ đệm "từ đang gõ" (các chữ cái liền trước con trỏ). Trước đây MỖI phím chữ đều
+    // gọi getTextBeforeCursor() - 1 lệnh IPC đồng bộ sang app đích. Giờ giữ bộ đệm trong bộ nhớ,
+    // chỉ đọc lại từ ô nhập khi bộ đệm "bẩn" (wordBufferDirty).
+    private val wordBuffer = StringBuilder()
+    private var wordBufferDirty = true
+    private var wordBufferTruncated = false
+
+    // [Mục 16] Mốc thời gian thao tác gõ gần nhất của chính bàn phím.
+    private var lastSelfEditAt = 0L
+
+    // [Mục 19] Nhận diện ô nhập: cùng ô (restarting) thì giữ trạng thái hoa/thường, không reset.
+    private var lastEditorSessionKey: String? = null
+
+    // [Mục 15] Ô mật khẩu: tắt Telex để chữ gõ ra đúng nguyên văn.
+    private var telexSuppressedForField = false
+
+    // [Mục 21] Âm thanh bấm phím.
+    private var keyClickEnabled = true
+    private val audioManager: AudioManager by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }
 
     private lateinit var rootContainer: FrameLayout
     private lateinit var keyboardBody: LinearLayout
@@ -162,7 +207,15 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private var camera: androidx.camera.core.Camera? = null
     private var torchOn = false
     private var torchButtonView: TextView? = null
-    private var lastQrHandledAt = 0L
+    // [Mục 1] Luồng nền riêng để phân tích khung hình (trước đây chạy ngay trên luồng chính).
+    private var scanExecutor: ExecutorService? = null
+    // Giữ tham chiếu BarcodeScanner để đóng (giải phóng tài nguyên native ML Kit) khi tắt quét.
+    private var barcodeScanner: BarcodeScanner? = null
+    // [Mục 3] Cờ nguyên tử: true = đang "nghỉ" sau khi xử lý 1 mã, bỏ qua mọi khung/kết quả tới.
+    private val scanFrameHandled = AtomicBoolean(false)
+    private var scanRearmRunnable: Runnable? = null
+    // Mã vừa bị bộ lọc ký tự đặc biệt chặn - để chỉ báo 1 lần, không báo liên tục.
+    private var lastBlockedContent: String? = null
 
     // Quét LIÊN TỤC: không tự đóng khung quét sau khi đọc được 1 mã, cho phép quét
     // nhiều mã kế tiếp nhau trong cùng 1 lượt mở camera. Theo dõi mã lặp lại để áp
@@ -241,18 +294,54 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
-        autoCapPending = true
-        capsMode = CapsMode.OFF
+        // [Mục 19] Nhận diện "cùng 1 ô nhập, chỉ bị khởi động lại" (restarting) - lúc này KHÔNG được
+        // reset hoa/thường + trang phím, nếu không đang gõ giữa câu cũng bị tự viết hoa ngẫu nhiên.
+        val sessionKey = editorSessionKey(info)
+        val sameFieldRestart = restarting && sessionKey == lastEditorSessionKey
+        lastEditorSessionKey = sessionKey
+        // [Mục 15] Ô mật khẩu -> tắt Telex. [Mục 21] đọc lại cài đặt âm thanh phím.
+        telexSuppressedForField = isPasswordField(info)
+        keyClickEnabled = KeyClickSettings.isEnabled(this)
+        // [Mục 17] Ô nhập mới/khởi động lại: bộ đệm từ phải đọc lại từ ô nhập.
+        invalidateWordBuffer()
+        currentWordEscaped = false
+        if (!sameFieldRestart) {
+            autoCapPending = true
+            capsMode = CapsMode.OFF
+        }
         // Ô nhập mã PIN/số điện thoại/số (inputType lớp CLASS_NUMBER, CLASS_PHONE,
         // hoặc CLASS_DATETIME - ví dụ ô nhập mã PIN khoá màn hình, mã OTP, SĐT...) thì tự
         // mở thẳng Trang bàn phím số (NUMPAD) luôn, đỡ phải tự bấm nút "123" mỗi lần.
         // Các ô nhập bình thường khác vẫn về Trang chữ (LETTERS) như cũ.
-        currentPage = if (isNumericInputField(info)) Page.NUMPAD else Page.LETTERS
+        if (!sameFieldRestart) {
+            currentPage = if (isNumericInputField(info)) Page.NUMPAD else Page.LETTERS
+        }
         // Người dùng có thể vừa đổi màu viền/nền sáng-tối/hiệu ứng RGB ở màn Cài đặt rồi
         // quay lại gõ ngay - vẽ lại toàn bộ theo cấu hình mới nhất, không cần khởi động lại.
         refreshTheme()
         refreshLetterCaseDisplay()
         startLedAnimationIfNeeded()
+    }
+
+    /** [Mục 19] Khoá nhận diện 1 ô nhập: gói ứng dụng + id ô + kiểu nhập. */
+    private fun editorSessionKey(info: EditorInfo?): String {
+        if (info == null) return "null"
+        return "${info.packageName}:${info.fieldId}:${info.inputType}"
+    }
+
+    /** [Mục 15] Ô nhập có phải ô MẬT KHẨU không (chữ/web/hiện mật khẩu, hoặc số-mật khẩu)? */
+    private fun isPasswordField(info: EditorInfo?): Boolean {
+        val inputType = info?.inputType ?: return false
+        val variation = inputType and android.text.InputType.TYPE_MASK_VARIATION
+        return when (inputType and android.text.InputType.TYPE_MASK_CLASS) {
+            android.text.InputType.TYPE_CLASS_TEXT ->
+                variation == android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                    variation == android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
+                    variation == android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            android.text.InputType.TYPE_CLASS_NUMBER ->
+                variation == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            else -> false
+        }
     }
 
     /** Ô nhập có phải kiểu chỉ nhận số không (mã PIN, mã OTP, số điện thoại, ngày giờ...)? */
@@ -359,6 +448,46 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         // người dùng muốn thoát quét - trước đây khiến khung quét tự ẩn ngoài ý muốn. Giờ khung
         // quét QR đứng yên cho tới khi người dùng tự bấm "Huỷ" (xem closeScanOverlay()).
         closeMicOverlay()
+        // [Mục 13] Dọn tài nguyên khi bàn phím ẩn: huỷ timer giữ phím (lặp xoá/popup dấu), gỡ
+        // bong bóng + popup đang nổi, tạm dừng hiệu ứng LED (đỡ tốn pin khi không ai nhìn thấy).
+        keyTimerHandler.removeCallbacksAndMessages(null)
+        dismissTransientKeyViews()
+        ledIdleHandler.removeCallbacks(ledIdleRunnable)
+        pauseLedForIdle()
+        invalidateWordBuffer()
+    }
+
+    /** [Mục 16] Con trỏ/nội dung ô nhập bị đổi TỪ BÊN NGOÀI (người dùng chạm sang chỗ khác, app
+     *  đích tự sửa/xoá/dán chữ...) - bộ đệm "từ đang gõ" và cờ escape Telex không còn đúng nữa,
+     *  phải làm mới. Thay đổi do CHÍNH bàn phím gây ra (trong [SELF_EDIT_WINDOW_MS]) thì bỏ qua. */
+    override fun onUpdateSelection(
+        oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int,
+        candidatesStart: Int, candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        if (SystemClock.uptimeMillis() - lastSelfEditAt < SELF_EDIT_WINDOW_MS) return
+        wordBufferDirty = true
+        currentWordEscaped = false
+        // Con trỏ nhảy về đầu ô nhập (vd app vừa xoá sạch ô sau khi gửi tin) -> chữ kế tiếp viết hoa.
+        if (newSelStart == 0 && newSelEnd == 0 && !autoCapPending) {
+            autoCapPending = true
+            if (::rowsHost.isInitialized) refreshLetterCaseDisplay()
+        }
+    }
+
+    private fun markSelfEdit() {
+        lastSelfEditAt = SystemClock.uptimeMillis()
+    }
+
+    /** [Mục 13] Gỡ bong bóng chữ + popup ký tự phụ đang nổi trên bàn phím. */
+    private fun dismissTransientKeyViews() {
+        for (v in transientKeyViews) (v.parent as? ViewGroup)?.removeView(v)
+        transientKeyViews.clear()
+    }
+
+    private fun removeAccentPopupView(popup: View) {
+        transientKeyViews.remove(popup)
+        (popup.parent as? ViewGroup)?.removeView(popup)
     }
 
     override fun onDestroy() {
@@ -367,6 +496,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         ledAnimator?.cancel()
         ledIdleHandler.removeCallbacksAndMessages(null)
         mainHandler.removeCallbacksAndMessages(null)
+        keyTimerHandler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
         cachedBackgroundBitmap?.recycle()
         cachedBackgroundBitmap = null
@@ -451,11 +581,15 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             topMargin = location[1] - rootLocation[1] - dp(56)
         }
         rootContainer.addView(bubble, params)
+        transientKeyViews.add(bubble)
         return bubble
     }
 
     private fun removeKeyBubble(bubble: View?) {
-        bubble?.let { rootContainer.removeView(it) }
+        bubble?.let {
+            transientKeyViews.remove(it)
+            rootContainer.removeView(it)
+        }
     }
 
     /** Màn hình xoay ngang có chiều cao khả dụng thấp hơn hẳn lúc đứng, nếu vẫn giữ nguyên
@@ -724,6 +858,21 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         return keyView
     }
 
+    /** [Mục 21] Phát tiếng bấm phím của hệ thống (tuân theo "Âm thanh khi chạm" của máy). */
+    private fun playKeyClick(code: String) {
+        try {
+            val effect = when (code) {
+                "BACKSPACE" -> AudioManager.FX_KEYPRESS_DELETE
+                "SPACE" -> AudioManager.FX_KEYPRESS_SPACEBAR
+                "ENTER" -> AudioManager.FX_KEYPRESS_RETURN
+                else -> AudioManager.FX_KEYPRESS_STANDARD
+            }
+            audioManager.playSoundEffect(effect)
+        } catch (ignored: Exception) {
+            // Audio chưa sẵn sàng hoặc người dùng đã tắt âm chạm - bỏ qua.
+        }
+    }
+
     private fun displayLabelFor(code: String): String = when (code) {
         "SHIFT" -> if (capsMode == CapsMode.CAPS_LOCK) "⇪" else "⇧"
         "BACKSPACE" -> "⌫"
@@ -776,16 +925,17 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     // xong nên cảm giác "rung trễ" dù chỉ vài chục mili-giây). Trừ BACKSPACE vì
                     // phím này tự rung theo từng lần xoá khi giữ tay lặp lại (xem handleBackspace()).
                     if (code != "BACKSPACE") VibrationSettings.tick(this@SmartKeyboardService)
+                    if (keyClickEnabled) playKeyClick(code)
                     backspaceFired = false
                     if (code == "BACKSPACE") {
                         repeatRunnable = object : Runnable {
                             override fun run() {
                                 backspaceFired = true
                                 handleBackspace()
-                                mainHandler.postDelayed(this, 50)
+                                keyTimerHandler.postDelayed(this, 50)
                             }
                         }
-                        mainHandler.postDelayed(repeatRunnable!!, 350)
+                        keyTimerHandler.postDelayed(repeatRunnable!!, 350)
                     } else if (code.length == 1 && longPressVariants.containsKey(code[0].lowercaseChar())) {
                         longPressRunnable = Runnable {
                             longPressTriggered = true
@@ -797,7 +947,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                             selectedVariantIndex = 0
                             popupView = showAccentPopup(v, popupChars, 0)
                         }
-                        mainHandler.postDelayed(longPressRunnable!!, 350)
+                        keyTimerHandler.postDelayed(longPressRunnable!!, 350)
                     }
                     true
                 }
@@ -815,10 +965,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     v.alpha = 1f
                     keyBubble?.let { removeKeyBubble(it) }
                     keyBubble = null
-                    repeatRunnable?.let { mainHandler.removeCallbacks(it) }
-                    longPressRunnable?.let { mainHandler.removeCallbacks(it) }
+                    repeatRunnable?.let { keyTimerHandler.removeCallbacks(it) }
+                    longPressRunnable?.let { keyTimerHandler.removeCallbacks(it) }
                     if (longPressTriggered) {
-                        popupView?.let { rootContainer.removeView(it) }
+                        popupView?.let { removeAccentPopupView(it) }
                         val chosen = popupChars.getOrNull(selectedVariantIndex)
                         if (chosen != null) commitAccentVariant(chosen, code[0].isUpperCase())
                     } else {
@@ -830,9 +980,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     v.alpha = 1f
                     keyBubble?.let { removeKeyBubble(it) }
                     keyBubble = null
-                    repeatRunnable?.let { mainHandler.removeCallbacks(it) }
-                    longPressRunnable?.let { mainHandler.removeCallbacks(it) }
-                    popupView?.let { rootContainer.removeView(it) }
+                    repeatRunnable?.let { keyTimerHandler.removeCallbacks(it) }
+                    longPressRunnable?.let { keyTimerHandler.removeCallbacks(it) }
+                    popupView?.let { removeAccentPopupView(it) }
                     // Khi ngón tay quét qua phím Backspace (swipe), Android gửi ACTION_CANCEL
                     // thay vì ACTION_UP nên onKeyTapped không bao giờ được gọi -> không xoá gì.
                     // Nếu repeatRunnable chưa kịp chạy (chưa xoá lần nào), xoá 1 ký tự ở đây.
@@ -876,6 +1026,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             topMargin = location[1] - rootLocation[1] - dp(46)
         }
         rootContainer.addView(popup, params)
+        transientKeyViews.add(popup)
         return popup
     }
 
@@ -902,7 +1053,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private fun commitAccentVariant(chosen: Char, wasUpperKey: Boolean) {
         val actual = if (capsMode != CapsMode.OFF || wasUpperKey) chosen.uppercaseChar() else chosen
+        markSelfEdit()
         currentInputConnection?.commitText(actual.toString(), 1)
+        appendToWordBuffer(actual)
         afterCharacterCommitted(isLetter = true)
     }
 
@@ -933,6 +1086,79 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         return textBefore.substring(start)
     }
 
+    // ---- [Mục 17] Bộ đệm từ đang gõ ----
+
+    private fun invalidateWordBuffer() {
+        wordBuffer.setLength(0)
+        wordBufferDirty = true
+        wordBufferTruncated = false
+    }
+
+    private fun clearWordBuffer() {
+        wordBuffer.setLength(0)
+        wordBufferDirty = false
+        wordBufferTruncated = false
+    }
+
+    /** Đọc lại từ đang gõ THẬT từ ô nhập (1 lệnh IPC) vào bộ đệm. */
+    private fun resyncWordBuffer() {
+        val w = getCurrentWordBuffer()
+        wordBuffer.setLength(0)
+        wordBuffer.append(w)
+        wordBufferDirty = false
+        wordBufferTruncated = w.length >= WORD_BUFFER_MAX
+    }
+
+    private fun currentWordForTelex(): String {
+        if (wordBufferDirty) resyncWordBuffer()
+        return wordBuffer.toString()
+    }
+
+    private fun setWordBuffer(word: String) {
+        wordBuffer.setLength(0)
+        wordBuffer.append(if (word.length > WORD_BUFFER_MAX) word.takeLast(WORD_BUFFER_MAX) else word)
+        wordBufferDirty = false
+        wordBufferTruncated = word.length >= WORD_BUFFER_MAX
+    }
+
+    /** Vừa chèn 1 ký tự: chữ cái thì nối vào từ đang gõ; ký tự khác thì từ đang gõ trở thành rỗng. */
+    private fun appendToWordBuffer(ch: Char) {
+        if (!ch.isLetter()) {
+            clearWordBuffer()
+            return
+        }
+        if (wordBufferDirty) return
+        wordBuffer.append(ch)
+        if (wordBuffer.length > WORD_BUFFER_MAX) {
+            wordBuffer.deleteCharAt(0)
+            wordBufferTruncated = true
+        }
+    }
+
+    /** Vừa xoá 1 ký tự trước con trỏ. */
+    private fun removeLastFromWordBuffer() {
+        if (wordBufferDirty) return
+        if (wordBuffer.isEmpty()) {
+            // Vừa xoá 1 ký tự KHÔNG phải chữ (dấu cách/dấu câu) -> từ liền trước giờ chạm sát con trỏ.
+            wordBufferDirty = true
+            return
+        }
+        wordBuffer.deleteCharAt(wordBuffer.length - 1)
+        if (wordBuffer.isEmpty() && wordBufferTruncated) {
+            wordBufferDirty = true
+            wordBufferTruncated = false
+        }
+    }
+
+    /** Kiểm tra nhanh bộ đệm còn khớp với chữ thật trước con trỏ không (chỉ gọi ngay trước khi
+     *  Telex SỬA/XOÁ chữ đã gõ - an toàn hơn tin bộ đệm mù quáng, tránh xoá nhầm nếu app đích
+     *  đổi con trỏ mà không báo onUpdateSelection). */
+    private fun isWordBufferInSync(ic: android.view.inputmethod.InputConnection, word: String): Boolean {
+        val text = ic.getTextBeforeCursor(word.length + 1, 0)?.toString() ?: return false
+        if (text.length < word.length || !text.endsWith(word)) return false
+        return text.length == word.length || !text[text.length - word.length - 1].isLetter()
+    }
+
     // SỬA LỖI (người dùng phản ánh: gõ "ngông"->"ngongo" [đã sửa lần trước, xem
     // TelexEngine.transformLastVowelWithDoubleLetter], rồi gõ thêm "f" thì phải ra "ngongof"
     // chứ không phải "ngòngo" - tức không được bỏ dấu nữa): mỗi khi 1 phím Telex kích hoạt
@@ -944,6 +1170,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private fun handleLetterOrSymbolKey(rawChar: Char) {
         val ic = currentInputConnection ?: return
+        markSelfEdit()
         val locale = LocaleSettings.getCurrentLocale(this)
         // Trang 3 (ký hiệu toán học/Hy Lạp) không áp dụng hoa/thường - π, Δ... phải gõ ra
         // đúng như hiển thị dù Shift/Caps Lock đang bật từ trang chữ trước đó. Phím tắt "đ" ở
@@ -954,19 +1181,27 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             if (isUpper) rawChar.uppercaseChar() else rawChar
         } else rawChar // số/ký tự đặc biệt (và phím tắt "đ") không có khái niệm hoa/thường
 
-        if (rawChar.isLetter() && locale.usesTelex && currentPage != Page.SYMBOLS2) {
-            val wordBefore = getCurrentWordBuffer()
+        if (rawChar.isLetter() && locale.usesTelex && currentPage != Page.SYMBOLS2 && !telexSuppressedForField) {
+            var wordBefore = currentWordForTelex()
             // Từ đang gõ RỖNG nghĩa là vừa bắt đầu 1 từ MỚI (sau dấu cách/dấu câu/xuống dòng,
             // hoặc mới mở ô nhập) - luôn reset cờ escape của từ TRƯỚC, không để nó ảnh hưởng
             // nhầm sang từ hoàn toàn khác.
             if (wordBefore.isEmpty()) currentWordEscaped = false
 
             if (!currentWordEscaped) {
-                val transformed = TelexEngine.applyKey(wordBefore, typedChar)
+                var transformed = TelexEngine.applyKey(wordBefore, typedChar)
+                if (transformed != null && wordBefore.isNotEmpty() && !isWordBufferInSync(ic, wordBefore)) {
+                    // Bộ đệm đã lệch so với chữ thật (hiếm) -> đọc lại rồi tính lại cho đúng.
+                    resyncWordBuffer()
+                    wordBefore = wordBuffer.toString()
+                    if (wordBefore.isEmpty()) currentWordEscaped = false
+                    transformed = if (currentWordEscaped) null else TelexEngine.applyKey(wordBefore, typedChar)
+                }
                 if (transformed != null) {
                     if (transformed.wasEscape) currentWordEscaped = true
                     ic.deleteSurroundingText(wordBefore.length, 0)
                     ic.commitText(transformed.newWord, 1)
+                    setWordBuffer(transformed.newWord)
                     afterCharacterCommitted(isLetter = true)
                     return
                 }
@@ -974,11 +1209,14 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         }
 
         ic.commitText(typedChar.toString(), 1)
+        appendToWordBuffer(typedChar)
         afterCharacterCommitted(isLetter = rawChar.isLetter())
     }
 
     private fun commitPunctuation(symbol: String) {
+        markSelfEdit()
         currentInputConnection?.commitText(symbol, 1)
+        clearWordBuffer()
         if (symbol == "." || symbol == "!" || symbol == "?") {
             autoCapPending = true
         }
@@ -1006,11 +1244,14 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         // vùng chọn, còn khối đang bôi đen giữ nguyên) -> trước đây gây cảm giác "quét khối
         // xoá không được". Có selection thì phải xoá bằng commitText("", 1) - thay thế toàn bộ
         // phần đang chọn bằng chuỗi rỗng, đúng hành vi Backspace tiêu chuẩn của các bàn phím khác.
+        markSelfEdit()
         val hasSelection = !ic.getSelectedText(0).isNullOrEmpty()
         if (hasSelection) {
             ic.commitText("", 1)
+            invalidateWordBuffer() // xoá cả khối chọn: chữ trước con trỏ có thể là bất cứ gì
         } else {
             ic.deleteSurroundingText(1, 0)
+            removeLastFromWordBuffer()
         }
         // BACKSPACE vẫn tự rung ở đây (không rung ở ACTION_DOWN) vì hàm này còn được gọi lặp
         // lại liên tục lúc giữ tay để xoá nhanh - mỗi lần xoá cần rung riêng để phản hồi đúng
@@ -1019,11 +1260,15 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     }
 
     private fun handleSpace() {
+        markSelfEdit()
         currentInputConnection?.commitText(" ", 1)
+        clearWordBuffer()
         // Rung đã xử lý ngay lúc chạm xuống (ACTION_DOWN) - xem attachKeyTouchHandling().
     }
 
     private fun handleEnter() {
+        markSelfEdit()
+        invalidateWordBuffer() // Enter có thể xuống dòng hoặc kích hoạt hành động tuỳ ô nhập
         currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
         currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
         autoCapPending = true
@@ -1281,6 +1526,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         val providerFuture = ProcessCameraProvider.getInstance(this)
         providerFuture.addListener({
             try {
+                // Người dùng đã bấm Huỷ trước khi camera kịp khởi động -> không mở camera nữa (tránh rò rỉ).
+                if (scanOverlay !== overlay) return@addListener
                 val provider = providerFuture.get()
                 cameraProvider = provider
                 val preview = androidx.camera.core.Preview.Builder().build().also {
@@ -1290,7 +1537,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                 val scanner = BarcodeScanning.getClient()
-                analysis.setAnalyzer(ContextCompat.getMainExecutor(this)) { imageProxy ->
+                try { barcodeScanner?.close() } catch (ignored: Exception) { }
+                barcodeScanner = scanner
+                scanFrameHandled.set(false)
+                lastBlockedContent = null
+                // [Mục 1] Phân tích khung hình trên luồng NỀN riêng, không chiếm luồng chính (UI).
+                val executor = scanExecutor ?: Executors.newSingleThreadExecutor().also { scanExecutor = it }
+                analysis.setAnalyzer(executor) { imageProxy ->
                     analyzeFrameForBarcode(imageProxy, scanner)
                 }
                 provider.unbindAll()
@@ -1319,54 +1572,115 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     }
 
     @androidx.camera.core.ExperimentalGetImage
-    private fun analyzeFrameForBarcode(imageProxy: ImageProxy, scanner: com.google.mlkit.vision.barcode.BarcodeScanner) {
-        val mediaImage = imageProxy.image
-        if (mediaImage == null) {
-            imageProxy.close()
-            return
+    /** [Mục 2] Chạy LIÊN TỤC (~30 lần/giây) trên luồng nền - bọc try/catch toàn bộ và LUÔN đóng
+     *  imageProxy (kể cả khi lỗi), nếu không camera sẽ "tắc" (ngừng gửi khung mới) hoặc lỗi lọt
+     *  ra làm sập cả tiến trình bàn phím. */
+    private fun analyzeFrameForBarcode(imageProxy: ImageProxy, scanner: BarcodeScanner) {
+        try {
+            val mediaImage = imageProxy.image
+            // [Mục 3] Đang "nghỉ" sau khi xử lý 1 mã -> bỏ qua khung này, khỏi tốn công nhận dạng.
+            if (mediaImage == null || scanFrameHandled.get()) {
+                imageProxy.close()
+                return
+            }
+            val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+            scanner.process(image)
+                .addOnSuccessListener { barcodes -> handleBarcodeResults(barcodes) }
+                .addOnFailureListener { /* bỏ qua 1 khung lỗi - sẽ có khung kế tiếp */ }
+                .addOnCompleteListener { imageProxy.close() }
+        } catch (e: Exception) {
+            try { imageProxy.close() } catch (ignored: Exception) { }
         }
-        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-        scanner.process(image)
-            .addOnSuccessListener { barcodes -> handleBarcodeResults(barcodes) }
-            .addOnCompleteListener { imageProxy.close() }
+    }
+
+    /** [Mục 5] Lấy nội dung mã: ưu tiên rawValue, rồi displayValue, cuối cùng giải mã rawBytes
+     *  (UTF-8, nếu có ký tự lỗi thì thử ISO-8859-1) - mã chứa tiếng Việt/nhị phân đọc đúng hơn. */
+    private fun extractBarcodeText(barcode: Barcode): String? {
+        val raw = barcode.rawValue
+        if (!raw.isNullOrEmpty()) return raw
+        val shown = barcode.displayValue
+        if (!shown.isNullOrEmpty()) return shown
+        val bytes = barcode.rawBytes ?: return null
+        if (bytes.isEmpty()) return null
+        return try {
+            val utf8 = String(bytes, Charsets.UTF_8)
+            if (utf8.contains('\uFFFD')) String(bytes, Charsets.ISO_8859_1) else utf8
+        } catch (e: Exception) {
+            String(bytes, Charsets.ISO_8859_1)
+        }
+    }
+
+    private fun scheduleScanRearm(delayMs: Long) {
+        scanRearmRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable { scanFrameHandled.set(false) }
+        scanRearmRunnable = r
+        mainHandler.postDelayed(r, delayMs)
     }
 
     private fun handleBarcodeResults(barcodes: List<Barcode>) {
-        val now = System.currentTimeMillis()
-        if (now - lastQrHandledAt < 1500) return // chống đọc trùng nhiều khung hình liên tiếp của CÙNG 1 lượt giữ mã trước camera
-        val content = barcodes.firstOrNull()?.rawValue ?: return
-        lastQrHandledAt = now
+        if (scanOverlay == null || scanFrameHandled.get()) return
+        val content = barcodes.asSequence().mapNotNull { extractBarcodeText(it) }.firstOrNull() ?: return
+        // [Mục 3] Cờ nguyên tử: chỉ 1 kết quả được xử lý mỗi lượt, dù nhiều khung về cùng lúc.
+        if (!scanFrameHandled.compareAndSet(false, true)) return
 
-        if (content == lastScannedContent) {
-            duplicateStreak++
-        } else {
-            // Mã KHÁC với lần trước -> đếm lại từ đầu.
-            lastScannedContent = content
-            duplicateStreak = 1
-            duplicateLimitToastShown = false
-        }
-
-        val duplicateLimit = ScanHistoryStore.getDuplicateLimit(this)
-        if (duplicateStreak > duplicateLimit) {
-            // Đã đạt giới hạn lặp cho ĐÚNG mã này - ngừng xuất thêm, chỉ báo 1 lần
-            // (không báo liên tục mỗi khung hình) cho tới khi người dùng đưa mã KHÁC vào.
-            if (!duplicateLimitToastShown) {
-                showToast("Đã đạt giới hạn quét lặp ($duplicateLimit lần) cho mã này. Quét mã khác để tiếp tục.")
-                duplicateLimitToastShown = true
+        var rearmDelay = SCAN_REARM_DELIVERED_MS
+        try {
+            // Bộ lọc ký tự đặc biệt (Cài đặt -> "Bộ lọc ký tự đặc biệt").
+            val blockedChar = ScanFilterSettings.findBlockedChar(this, content)
+            if (blockedChar != null) {
+                rearmDelay = SCAN_REARM_IGNORED_MS
+                if (content != lastBlockedContent) {
+                    lastBlockedContent = content
+                    showToast("Mã có ký tự đặc biệt \"$blockedChar\" nên không xuất. Quét mã khác để tiếp tục.")
+                }
+                return
             }
-            return
-        }
+            lastBlockedContent = null
 
-        currentInputConnection?.commitText(content, 1)
-        // Yêu cầu: sau mỗi mã quét ra, tự động xuống dòng bằng ENTER CỨNG (gửi thẳng
-        // KEYCODE_ENTER qua sendKeyEvent - giống hệt phím Enter thường của bàn phím),
-        // KHÔNG dùng performEditorAction (vốn có thể bị ô nhập diễn giải thành "Xong"/
-        // "Tìm kiếm"... tuỳ IME option của app, không phải xuống dòng thật).
-        currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
-        currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
-        ScanHistoryStore.addEntry(this, content)
-        VibrationSettings.tick(this)
-        // KHÔNG đóng khung quét ở đây - quét liên tục, người dùng tự bấm "Huỷ" khi xong.
+            if (content == lastScannedContent) {
+                duplicateStreak++
+            } else {
+                // Mã KHÁC với lần trước -> đếm lại từ đầu.
+                lastScannedContent = content
+                duplicateStreak = 1
+                duplicateLimitToastShown = false
+            }
+
+            // Bản Google Play (flavor ggplay) không giới hạn số lần xuất liên tiếp cùng 1 mã.
+            val duplicateLimit = ScanHistoryStore.getDuplicateLimit(this)
+            if (!BuildConfig.UNLIMITED_CONSECUTIVE_SCAN && duplicateStreak > duplicateLimit) {
+                // Đã đạt giới hạn lặp cho ĐÚNG mã này - ngừng xuất thêm, chỉ báo 1 lần
+                // (không báo liên tục mỗi khung hình) cho tới khi người dùng đưa mã KHÁC vào.
+                rearmDelay = SCAN_REARM_IGNORED_MS
+                if (!duplicateLimitToastShown) {
+                    showToast("Đã đạt giới hạn quét lặp ($duplicateLimit lần) cho mã này. Quét mã khác để tiếp tục.")
+                    duplicateLimitToastShown = true
+                }
+                return
+            }
+
+            markSelfEdit()
+            currentInputConnection?.commitText(content, 1)
+            // Yêu cầu: sau mỗi mã quét ra, tự động xuống dòng bằng ENTER CỨNG (gửi thẳng
+            // KEYCODE_ENTER qua sendKeyEvent - giống hệt phím Enter thường của bàn phím),
+            // KHÔNG dùng performEditorAction (vốn có thể bị ô nhập diễn giải thành "Xong"/
+            // "Tìm kiếm"... tuỳ IME option của app, không phải xuống dòng thật).
+            currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
+            currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
+            invalidateWordBuffer()
+            ScanHistoryStore.addEntry(this, content)
+            VibrationSettings.tick(this)
+
+            // [Mục 9] Chế độ "quét 1 lần": xuất xong thì tự đóng khung quét.
+            // Chế độ liên tục (mặc định): KHÔNG đóng - người dùng tự bấm "Huỷ" khi xong.
+            if (!ScanModeSettings.isContinuous(this)) {
+                closeScanOverlay()
+            }
+        } catch (e: Exception) {
+            // Không để lỗi xử lý 1 mã làm sập cả bàn phím.
+        } finally {
+            if (scanOverlay != null) scheduleScanRearm(rearmDelay)
+        }
     }
 
     private fun closeScanOverlay() {
@@ -1381,11 +1695,20 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         camera = null
         scanOverlay?.let { rootContainer.removeView(it) }
         scanOverlay = null
+        scanRearmRunnable?.let { mainHandler.removeCallbacks(it) }
+        scanRearmRunnable = null
+        scanFrameHandled.set(false)
         try {
             cameraProvider?.unbindAll()
         } catch (ignored: Exception) {
         }
+        // Giải phóng ML Kit + luồng phân tích nền (sau khi đã gỡ camera).
+        try { barcodeScanner?.close() } catch (ignored: Exception) { }
+        barcodeScanner = null
+        scanExecutor?.shutdown()
+        scanExecutor = null
         keyboardBody.visibility = View.VISIBLE
+        lastBlockedContent = null
         lastScannedContent = null
         duplicateStreak = 0
         duplicateLimitToastShown = false
@@ -1496,7 +1819,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private fun sendMicTextAndClose() {
         val text = micRecognizedText
         if (text.isNotBlank()) {
+            markSelfEdit()
             currentInputConnection?.commitText("$text ", 1)
+            clearWordBuffer() // kết thúc bằng dấu cách -> từ đang gõ rỗng
         }
         closeMicOverlay()
     }

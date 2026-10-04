@@ -7,7 +7,9 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.InputMethodManager
@@ -107,8 +109,17 @@ class SettingsActivity : AppCompatActivity() {
         contentBox.addView(sectionTitle("Rung khi gõ"))
         contentBox.addView(buildVibrationSection())
         contentBox.addView(spacer())
+        contentBox.addView(sectionTitle("Âm thanh khi gõ"))
+        contentBox.addView(buildKeyClickSection())
+        contentBox.addView(spacer())
+        contentBox.addView(sectionTitle("Chế độ quét"))
+        contentBox.addView(buildScanModeSection())
+        contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Giới hạn quét trùng lặp"))
         contentBox.addView(buildDuplicateScanLimitSection())
+        contentBox.addView(spacer())
+        contentBox.addView(sectionTitle("Bộ lọc ký tự đặc biệt"))
+        contentBox.addView(buildSpecialCharFilterSection())
         contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Lịch sử quét"))
         contentBox.addView(buildHistorySection())
@@ -616,6 +627,11 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun buildDuplicateScanLimitSection(): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // Bản Google Play (flavor "ggplay") KHÔNG giới hạn số lần xuất liên tiếp cùng 1 mã.
+        if (BuildConfig.UNLIMITED_CONSECUTIVE_SCAN) {
+            box.addView(bodyText("Bản này không giới hạn số lần xuất liên tiếp cùng 1 mã QR/mã vạch."))
+            return box
+        }
         box.addView(bodyText(
             "Khi quét liên tục cùng 1 mã QR/mã vạch nhiều lần liền nhau, chỉ xuất dữ liệu " +
                 "tối đa số lần đặt dưới đây rồi tự dừng (quét mã KHÁC thì đếm lại từ đầu)."
@@ -646,6 +662,116 @@ class SettingsActivity : AppCompatActivity() {
             countLabel.text = ScanHistoryStore.getDuplicateLimit(this).toString()
         })
         box.addView(row)
+        return box
+    }
+
+    // ============================== ÂM THANH KHI GÕ ==============================
+
+    private fun buildKeyClickSection(): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val switchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        switchRow.addView(TextView(this).apply {
+            text = "Bật âm thanh khi gõ"
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        switchRow.addView(Switch(this).apply {
+            isChecked = KeyClickSettings.isEnabled(this@SettingsActivity)
+            setOnCheckedChangeListener { _, isChecked -> KeyClickSettings.setEnabled(this@SettingsActivity, isChecked) }
+        })
+        box.addView(switchRow)
+        box.addView(bodyText(
+            "Phát tiếng \"tách\" của hệ thống mỗi lần bấm phím. Nếu máy đã tắt \"Âm thanh khi chạm\" " +
+                "trong Cài đặt hệ thống thì sẽ không có tiếng."
+        ))
+        return box
+    }
+
+    // ============================== CHẾ ĐỘ QUÉT ==============================
+
+    private fun buildScanModeSection(): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(bodyText("Chọn cách khung quét hoạt động sau khi đọc được 1 mã."))
+        val continuous = ScanModeSettings.isContinuous(this)
+        box.addView(checkToggleButton("Quét liên tục (bấm Huỷ để đóng)", continuous) {
+            ScanModeSettings.setContinuous(this, true)
+            rebuildAll()
+        })
+        box.addView(checkToggleButton("Quét 1 lần rồi tự đóng khung quét", !continuous) {
+            ScanModeSettings.setContinuous(this, false)
+            rebuildAll()
+        })
+        return box
+    }
+
+    // ============================== BỘ LỌC KÝ TỰ ĐẶC BIỆT ==============================
+
+    /** Ô tick "Không xuất kết quả khi mã quét có chứa ký tự đặc biệt" + danh sách ô "Ngoại trừ"
+     *  (các ký tự trong đó KHÔNG bị coi là đặc biệt) + nút "+" thêm ô loại trừ mới.
+     *  Tự dựng lại CHỈ khối này khi thêm/xoá ô (không build lại cả màn hình) để ô đang gõ không mất focus. */
+    private fun buildSpecialCharFilterSection(): View {
+        val ctx = this@SettingsActivity
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        fun render() {
+            box.removeAllViews()
+            val enabled = ScanFilterSettings.isBlockSpecialEnabled(ctx)
+            box.addView(checkToggleButton("Không xuất kết quả khi mã quét có chứa ký tự đặc biệt", enabled) {
+                ScanFilterSettings.setBlockSpecialEnabled(ctx, !enabled)
+                render()
+            })
+            box.addView(bodyText(
+                "Ký tự đặc biệt = mọi ký tự không phải chữ cái, chữ số hay khoảng trắng " +
+                    "(ví dụ: - _ . / @ # % ...). Mã có ký tự đặc biệt sẽ không được xuất vào ô nhập " +
+                    "và không lưu vào lịch sử."
+            ))
+            box.addView(bodyText(
+                "Ngoại trừ: các ký tự nhập vào ô bên dưới KHÔNG bị coi là đặc biệt (mã chứa chúng vẫn " +
+                    "được xuất). Gõ liền nhau, ví dụ: -_./   Bấm \"+\" để thêm ô loại trừ."
+            ))
+
+            val fields = ScanFilterSettings.getExceptionFields(ctx)
+            fields.forEachIndexed { index, value ->
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                val edit = EditText(ctx).apply {
+                    setText(value)
+                    hint = "Ngoại trừ (vd: -_./)"
+                    setTextColor(Color.WHITE)
+                    setHintTextColor(Color.GRAY)
+                    inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    isSingleLine = true
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    // Thêm listener SAU setText để không ghi đè dữ liệu lúc vừa dựng ô.
+                    addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                        override fun afterTextChanged(s: Editable?) {
+                            ScanFilterSettings.setExceptionField(ctx, index, s?.toString().orEmpty())
+                        }
+                    })
+                }
+                row.addView(edit)
+                if (fields.size > 1) {
+                    row.addView(stepperButton("✕") {
+                        ScanFilterSettings.removeExceptionField(ctx, index)
+                        render()
+                    })
+                }
+                box.addView(row)
+            }
+
+            if (fields.size < ScanFilterSettings.MAX_EXCEPTION_FIELDS) {
+                box.addView(actionButton("＋  Thêm ô loại trừ") {
+                    ScanFilterSettings.addExceptionField(ctx)
+                    render()
+                })
+            }
+        }
+
+        render()
         return box
     }
 

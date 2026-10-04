@@ -50,20 +50,34 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Build APK Debug
+      # assembleDebug / assembleRelease build TẤT CẢ flavor (direct + ggplay).
+      - name: Build APK Debug (mọi flavor)
         run: gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Build APK Release (không minify, ký bằng keystore commit sẵn trong repo)
+      - name: Build APK Release (mọi flavor, không minify, ký bằng keystore commit sẵn trong repo)
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Tìm file APK vừa build
         run: find app/build/outputs -iname "*.apk"
 
+      # Đặt tên APK + artifact theo PHIÊN BẢN + SỐ LẦN CHẠY + MÃ COMMIT để biết ngay file nào là
+      # của bản nào (trước đây tên cố định "VNSmartKey-apk", tải nhiều lần dễ lẫn).
+      - name: Đặt tên APK theo phiên bản + commit
+        run: |
+          VERSION_NAME=$(grep -oP 'versionName "\K[^"]+' app/build.gradle | head -1)
+          SHORT_SHA="${GITHUB_SHA::7}"
+          mkdir -p dist
+          find app/build/outputs/apk -iname "*.apk" | while read -r f; do
+            variant=$(basename "$f" .apk)   # vd: app-direct-debug
+            variant="${variant#app-}"       # vd: direct-debug
+            cp "$f" "dist/VNSmartKey-v${VERSION_NAME}-${variant}-b${GITHUB_RUN_NUMBER}-${SHORT_SHA}.apk"
+          done
+          ls -la dist
+          echo "ARTIFACT_NAME=VNSmartKey-v${VERSION_NAME}-b${GITHUB_RUN_NUMBER}-${SHORT_SHA}" >> "$GITHUB_ENV"
+
       - name: Tải APK lên làm Artifact của lần chạy này
         uses: actions/upload-artifact@v4
         with:
-          name: VNSmartKey-apk
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+          name: ${{ env.ARTIFACT_NAME }}
+          path: dist/*.apk
           if-no-files-found: error

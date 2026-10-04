@@ -55,6 +55,22 @@ android {
     buildFeatures {
         buildConfig true
     }
+
+    // Bản Google Play (ggplay) KHÔNG giới hạn số lần xuất liên tiếp cùng 1 mã khi quét; bản
+    // direct (phát hành trực tiếp ngoài Google Play) vẫn có giới hạn (người dùng tự chỉnh trong
+    // Cài đặt - xem ScanHistoryStore). CẢ 2 flavor dùng CHUNG applicationId + CHUNG keystore ký
+    // nên cài đè lên nhau bình thường, không làm gián đoạn người dùng đang dùng bản cũ.
+    flavorDimensions "distribution"
+    productFlavors {
+        direct {
+            dimension "distribution"
+            buildConfigField "boolean", "UNLIMITED_CONSECUTIVE_SCAN", "false"
+        }
+        ggplay {
+            dimension "distribution"
+            buildConfigField "boolean", "UNLIMITED_CONSECUTIVE_SCAN", "true"
+        }
+    }
 }
 
 dependencies {
