@@ -38,14 +38,18 @@ object VibrationSettings {
      *
      *  Độ mạnh rung phụ thuộc 2 yếu tố: BIÊN ĐỘ (amplitude, motor rung mạnh/nhẹ) và
      *  THỜI LƯỢNG (duration, rung lâu hay mau tắt) - ở mức 100% trước đây chỉ kéo dài
-     *  28ms nên nhiều máy cảm giác rung "chưa đã tay"; giờ kéo dài tới 60ms ở mức tối
+     *  28ms nên nhiều máy cảm giác rung "chưa đã tay"; giờ kéo dài tới 110ms ở mức tối
      *  đa để cảm nhận rõ ràng hơn, đồng thời biên độ đạt tối đa (255, giới hạn phần
      *  cứng Android) sớm hơn 1 chút để các mức cao đều đã cảm nhận rõ. */
     fun tick(context: Context) {
         if (!isEnabled(context)) return
         val strength = getStrengthPercent(context)
         if (strength <= 0) return
-        val durationMs = 10L + (strength * 0.5).toLong() // 10ms (1%) .. 60ms (100%)
+        // Thời lượng rung tăng đều từ 10ms (1%) tới 110ms (100%). Trước đây mức tối đa chỉ 60ms nên
+        // chưa phải mạnh nhất của máy: biên độ đã chạm trần 255 từ ~80%, mà nhiều mô-tơ (nhất là loại
+        // không chỉnh được biên độ) cần rung đủ lâu mới đạt hết lực - nên phần "mạnh thêm" ở các mức
+        // cao phải đến từ thời lượng rung dài hơn.
+        val durationMs = 10L + strength.toLong() // 10ms (1%) .. 110ms (100%)
         val vibrator = obtainVibrator(context) ?: return
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
