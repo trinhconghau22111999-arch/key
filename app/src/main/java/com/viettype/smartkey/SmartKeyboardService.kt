@@ -39,7 +39,6 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.barcode.BarcodeScanner
-import android.media.AudioManager
 import android.os.SystemClock
 import android.view.inputmethod.EditorInfo
 import java.util.concurrent.ExecutorService
@@ -104,9 +103,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     // [Mục 15] Ô mật khẩu: tắt Telex để chữ gõ ra đúng nguyên văn.
     private var telexSuppressedForField = false
 
-    // [Mục 21] Âm thanh bấm phím.
-    private var keyClickEnabled = true
-    private val audioManager: AudioManager by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }
+    // [Mục 21] Âm thanh bấm phím (tự phát qua AudioTrack, có chỉnh âm lượng - xem KeyClickPlayer).
+    private var keyClickPlayer: KeyClickPlayer? = null
 
     private lateinit var rootContainer: FrameLayout
     private lateinit var keyboardBody: LinearLayout
@@ -299,9 +297,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         val sessionKey = editorSessionKey(info)
         val sameFieldRestart = restarting && sessionKey == lastEditorSessionKey
         lastEditorSessionKey = sessionKey
-        // [Mục 15] Ô mật khẩu -> tắt Telex. [Mục 21] đọc lại cài đặt âm thanh phím.
+        // [Mục 15] Ô mật khẩu -> tắt Telex.
         telexSuppressedForField = isPasswordField(info)
-        keyClickEnabled = KeyClickSettings.isEnabled(this)
         // [Mục 17] Ô nhập mới/khởi động lại: bộ đệm từ phải đọc lại từ ô nhập.
         invalidateWordBuffer()
         currentWordEscaped = false
@@ -497,6 +494,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         ledIdleHandler.removeCallbacksAndMessages(null)
         mainHandler.removeCallbacksAndMessages(null)
         keyTimerHandler.removeCallbacksAndMessages(null)
+        keyClickPlayer?.release()
+        keyClickPlayer = null
         speechRecognizer?.destroy()
         cachedBackgroundBitmap?.recycle()
         cachedBackgroundBitmap = null
@@ -858,19 +857,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         return keyView
     }
 
-    /** [Mục 21] Phát tiếng bấm phím của hệ thống (tuân theo "Âm thanh khi chạm" của máy). */
-    private fun playKeyClick(code: String) {
-        try {
-            val effect = when (code) {
-                "BACKSPACE" -> AudioManager.FX_KEYPRESS_DELETE
-                "SPACE" -> AudioManager.FX_KEYPRESS_SPACEBAR
-                "ENTER" -> AudioManager.FX_KEYPRESS_RETURN
-                else -> AudioManager.FX_KEYPRESS_STANDARD
-            }
-            audioManager.playSoundEffect(effect)
-        } catch (ignored: Exception) {
-            // Audio chưa sẵn sàng hoặc người dùng đã tắt âm chạm - bỏ qua.
-        }
+    /** [Mục 21] Phát tiếng bấm phím theo âm lượng đặt trong Cài đặt (đọc lại mỗi lần bấm nên
+     *  đổi thanh kéo xong có hiệu lực ngay, kể cả khi bàn phím xem trước đang mở). */
+    private fun playKeyClick() {
+        val volume = KeyClickSettings.effectiveVolumePercent(this)
+        if (volume <= 0) return
+        val player = keyClickPlayer ?: KeyClickPlayer().also { keyClickPlayer = it }
+        player.play(volume)
     }
 
     private fun displayLabelFor(code: String): String = when (code) {
@@ -925,7 +918,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     // xong nên cảm giác "rung trễ" dù chỉ vài chục mili-giây). Trừ BACKSPACE vì
                     // phím này tự rung theo từng lần xoá khi giữ tay lặp lại (xem handleBackspace()).
                     if (code != "BACKSPACE") VibrationSettings.tick(this@SmartKeyboardService)
-                    if (keyClickEnabled) playKeyClick(code)
+                    playKeyClick()
                     backspaceFired = false
                     if (code == "BACKSPACE") {
                         repeatRunnable = object : Runnable {
@@ -1637,20 +1630,13 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             }
             lastBlockedContent = null
 
-            if (content == lastScannedContent) {
-                duplicateStreak++
-            } else {
-                // Mã KHÁC với lần trước -> đếm lại từ đầu.
-                lastScannedContent = content
-                duplicateStreak = 1
-                duplicateLimitToastShown = false
-            }
-
-            // Bản Google Play (flavor ggplay) không giới hạn số lần xuất liên tiếp cùng 1 mã.
+            // Giới hạn quét trùng lặp (giống QR-CODE): cùng 1 mã được xuất tối đa N lần LIÊN TIẾP,
+            // N chỉnh trong Cài đặt (mặc định 2). Quét mã KHÁC thì đếm lại từ đầu.
+            val isSameAsLast = content == lastScannedContent
             val duplicateLimit = ScanHistoryStore.getDuplicateLimit(this)
-            if (!BuildConfig.UNLIMITED_CONSECUTIVE_SCAN && duplicateStreak > duplicateLimit) {
-                // Đã đạt giới hạn lặp cho ĐÚNG mã này - ngừng xuất thêm, chỉ báo 1 lần
-                // (không báo liên tục mỗi khung hình) cho tới khi người dùng đưa mã KHÁC vào.
+            if (isSameAsLast && duplicateStreak >= duplicateLimit) {
+                // Đã đạt giới hạn cho ĐÚNG mã này - ngừng xuất thêm, chỉ báo 1 lần (không báo
+                // liên tục mỗi khung hình) cho tới khi người dùng đưa mã KHÁC vào.
                 rearmDelay = SCAN_REARM_IGNORED_MS
                 if (!duplicateLimitToastShown) {
                     showToast("Đã đạt giới hạn quét lặp ($duplicateLimit lần) cho mã này. Quét mã khác để tiếp tục.")
@@ -1658,6 +1644,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 }
                 return
             }
+            duplicateStreak = if (isSameAsLast) duplicateStreak + 1 else 1
+            lastScannedContent = content
+            duplicateLimitToastShown = false
 
             markSelfEdit()
             currentInputConnection?.commitText(content, 1)

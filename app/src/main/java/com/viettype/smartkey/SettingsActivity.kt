@@ -627,11 +627,6 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun buildDuplicateScanLimitSection(): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        // Bản Google Play (flavor "ggplay") KHÔNG giới hạn số lần xuất liên tiếp cùng 1 mã.
-        if (BuildConfig.UNLIMITED_CONSECUTIVE_SCAN) {
-            box.addView(bodyText("Bản này không giới hạn số lần xuất liên tiếp cùng 1 mã QR/mã vạch."))
-            return box
-        }
         box.addView(bodyText(
             "Khi quét liên tục cùng 1 mã QR/mã vạch nhiều lần liền nhau, chỉ xuất dữ liệu " +
                 "tối đa số lần đặt dưới đây rồi tự dừng (quét mã KHÁC thì đếm lại từ đầu)."
@@ -639,10 +634,11 @@ class SettingsActivity : AppCompatActivity() {
 
         val countLabel = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 22f
+            textSize = 20f
             gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
             text = ScanHistoryStore.getDuplicateLimit(this@SettingsActivity).toString()
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(dp(70), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
 
         val row = LinearLayout(this).apply {
@@ -667,7 +663,23 @@ class SettingsActivity : AppCompatActivity() {
 
     // ============================== ÂM THANH KHI GÕ ==============================
 
+    /** Phát thử tiếng bấm phím ngay trong màn Cài đặt (khi kéo thanh/thả tay). */
+    private var keyClickPreviewPlayer: KeyClickPlayer? = null
+
+    private fun playKeyClickPreview(percent: Int) {
+        if (percent <= 0) return
+        val player = keyClickPreviewPlayer ?: KeyClickPlayer().also { keyClickPreviewPlayer = it }
+        player.play(percent)
+    }
+
+    override fun onDestroy() {
+        keyClickPreviewPlayer?.release()
+        keyClickPreviewPlayer = null
+        super.onDestroy()
+    }
+
     private fun buildKeyClickSection(): View {
+        val ctx = this@SettingsActivity
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val switchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         switchRow.addView(TextView(this).apply {
@@ -676,14 +688,46 @@ class SettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         switchRow.addView(Switch(this).apply {
-            isChecked = KeyClickSettings.isEnabled(this@SettingsActivity)
-            setOnCheckedChangeListener { _, isChecked -> KeyClickSettings.setEnabled(this@SettingsActivity, isChecked) }
+            isChecked = KeyClickSettings.isEnabled(ctx)
+            setOnCheckedChangeListener { _, isChecked -> KeyClickSettings.setEnabled(ctx, isChecked) }
         })
         box.addView(switchRow)
+
         box.addView(bodyText(
-            "Phát tiếng \"tách\" của hệ thống mỗi lần bấm phím. Nếu máy đã tắt \"Âm thanh khi chạm\" " +
-                "trong Cài đặt hệ thống thì sẽ không có tiếng."
+            "Kéo thanh để chỉnh độ lớn tiếng bấm phím - kéo về 0% để tắt hẳn. Tiếng phát theo âm lượng " +
+                "Media của máy (nếu Media đang để nhỏ hoặc tắt thì sẽ nghe nhỏ hoặc không nghe thấy)."
         ))
+
+        val valueLabel = bodyText("${KeyClickSettings.getVolumePercent(ctx)}%").apply {
+            setTextColor(Color.WHITE)
+            textSize = 20f
+        }
+        box.addView(valueLabel)
+
+        // Phát thử NGAY trong lúc kéo (giới hạn >= 80ms/lần để không dồn dập) để nghe mức đang chọn.
+        var lastDragClickAt = 0L
+        box.addView(SeekBar(this).apply {
+            max = 100
+            progress = KeyClickSettings.getVolumePercent(ctx)
+            progressTintList = android.content.res.ColorStateList.valueOf(ThemeSettings.getAccentColor(ctx))
+            thumbTintList = android.content.res.ColorStateList.valueOf(ThemeSettings.getAccentColor(ctx))
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    KeyClickSettings.setVolumePercent(ctx, progress)
+                    valueLabel.text = "$progress%"
+                    val now = System.currentTimeMillis()
+                    if (now - lastDragClickAt >= 80) {
+                        lastDragClickAt = now
+                        playKeyClickPreview(progress)
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    playKeyClickPreview(seekBar?.progress ?: 0) // nghe thử lần cuối để chốt mức
+                }
+            })
+        })
         return box
     }
 

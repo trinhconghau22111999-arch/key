@@ -50,11 +50,8 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      # assembleDebug / assembleRelease build TẤT CẢ flavor (direct + ggplay).
-      - name: Build APK Debug (mọi flavor)
-        run: gradle assembleDebug --no-daemon --stacktrace
-
-      - name: Build APK Release (mọi flavor, không minify, ký bằng keystore commit sẵn trong repo)
+      # CHỈ build 1 APK duy nhất (release, không minify, ký bằng keystore cố định commit sẵn trong repo).
+      - name: Build APK (release)
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Tìm file APK vừa build
@@ -66,14 +63,12 @@ jobs:
         run: |
           VERSION_NAME=$(grep -oP 'versionName "\K[^"]+' app/build.gradle | head -1)
           SHORT_SHA="${GITHUB_SHA::7}"
+          APK=$(find app/build/outputs/apk -iname "*.apk" | head -1)
           mkdir -p dist
-          find app/build/outputs/apk -iname "*.apk" | while read -r f; do
-            variant=$(basename "$f" .apk)   # vd: app-direct-debug
-            variant="${variant#app-}"       # vd: direct-debug
-            cp "$f" "dist/VNSmartKey-v${VERSION_NAME}-${variant}-b${GITHUB_RUN_NUMBER}-${SHORT_SHA}.apk"
-          done
+          NAME="VNSmartKey-v${VERSION_NAME}-b${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+          cp "$APK" "dist/${NAME}.apk"
           ls -la dist
-          echo "ARTIFACT_NAME=VNSmartKey-v${VERSION_NAME}-b${GITHUB_RUN_NUMBER}-${SHORT_SHA}" >> "$GITHUB_ENV"
+          echo "ARTIFACT_NAME=${NAME}" >> "$GITHUB_ENV"
 
       - name: Tải APK lên làm Artifact của lần chạy này
         uses: actions/upload-artifact@v4
