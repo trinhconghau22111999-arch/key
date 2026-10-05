@@ -1661,12 +1661,6 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             invalidateWordBuffer()
             ScanHistoryStore.addEntry(this, content)
             VibrationSettings.tick(this)
-
-            // [Mục 9] Chế độ "quét 1 lần": xuất xong thì tự đóng khung quét.
-            // Chế độ liên tục (mặc định): KHÔNG đóng - người dùng tự bấm "Huỷ" khi xong.
-            if (!ScanModeSettings.isContinuous(this)) {
-                closeScanOverlay()
-            }
         } catch (e: Exception) {
             // Không để lỗi xử lý 1 mã làm sập cả bàn phím.
         } finally {

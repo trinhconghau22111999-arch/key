@@ -112,9 +112,6 @@ class SettingsActivity : AppCompatActivity() {
         contentBox.addView(sectionTitle("Âm thanh khi gõ"))
         contentBox.addView(buildKeyClickSection())
         contentBox.addView(spacer())
-        contentBox.addView(sectionTitle("Chế độ quét"))
-        contentBox.addView(buildScanModeSection())
-        contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Giới hạn quét trùng lặp"))
         contentBox.addView(buildDuplicateScanLimitSection())
         contentBox.addView(spacer())
@@ -732,23 +729,6 @@ class SettingsActivity : AppCompatActivity() {
                     playKeyClickPreview(seekBar?.progress ?: 0) // nghe thử lần cuối để chốt mức
                 }
             })
-        })
-        return box
-    }
-
-    // ============================== CHẾ ĐỘ QUÉT ==============================
-
-    private fun buildScanModeSection(): View {
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        box.addView(bodyText("Chọn cách khung quét hoạt động sau khi đọc được 1 mã."))
-        val continuous = ScanModeSettings.isContinuous(this)
-        box.addView(checkToggleButton("Quét liên tục (bấm Huỷ để đóng)", continuous) {
-            ScanModeSettings.setContinuous(this, true)
-            rebuildAll()
-        })
-        box.addView(checkToggleButton("Quét 1 lần rồi tự đóng khung quét", !continuous) {
-            ScanModeSettings.setContinuous(this, false)
-            rebuildAll()
         })
         return box
     }
