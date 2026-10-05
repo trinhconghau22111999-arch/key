@@ -4,7 +4,7 @@ import android.content.Context
 
 /**
  * Bật/tắt + chỉnh âm lượng tiếng "tách" mỗi lần bấm phím (0..100%, 0% = tắt hẳn).
- * Tiếng phát qua [KeyClickPlayer], độ lớn thực tế còn phụ thuộc âm lượng Media của máy.
+ * Tiếng phát qua [KeyClickPlayer] bằng kênh Báo thức nên không phụ thuộc âm lượng Media / chế độ im lặng.
  */
 object KeyClickSettings {
 

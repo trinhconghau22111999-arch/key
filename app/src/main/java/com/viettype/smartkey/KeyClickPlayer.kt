@@ -119,7 +119,11 @@ class KeyClickPlayer(context: Context) {
     private fun createTrack(): AudioTrack? {
         return try {
             val attrs = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
+                // Kênh BÁO THỨC: có thanh âm lượng riêng, không bị ảnh hưởng khi người dùng chỉnh/tắt
+                // âm lượng Media hay để máy ở chế độ im lặng/rung (kênh Media thì Media = 0 là mất tiếng).
+                // Lưu ý: Android không cho ứng dụng bỏ qua hoàn toàn âm lượng hệ thống - tiếng luôn phải
+                // qua 1 thanh âm lượng nào đó - nhưng âm lượng Báo thức ít khi bị chỉnh nhỏ như Media.
+                .setUsage(AudioAttributes.USAGE_ALARM)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
             val format = AudioFormat.Builder()

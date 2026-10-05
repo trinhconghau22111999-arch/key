@@ -694,8 +694,9 @@ class SettingsActivity : AppCompatActivity() {
         box.addView(switchRow)
 
         box.addView(bodyText(
-            "Kéo thanh để chỉnh độ lớn tiếng bấm phím - kéo về 0% để tắt hẳn. Tiếng phát theo âm lượng " +
-                "Media của máy (nếu Media đang để nhỏ hoặc tắt thì sẽ nghe nhỏ hoặc không nghe thấy)."
+            "Kéo thanh để chỉnh độ lớn tiếng bấm phím - kéo về 0% để tắt hẳn. Tiếng phát qua kênh Báo thức " +
+                "nên không bị ảnh hưởng khi bạn chỉnh âm lượng Media hay để máy ở chế độ im lặng/rung. " +
+                "(Vẫn không thể vượt qua âm lượng Báo thức của máy: nếu Báo thức để 0 thì sẽ không nghe thấy.)"
         ))
 
         val valueLabel = bodyText("${KeyClickSettings.getVolumePercent(ctx)}%").apply {
