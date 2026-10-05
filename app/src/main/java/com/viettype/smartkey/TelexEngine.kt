@@ -304,6 +304,36 @@ object TelexEngine {
             return TelexResult(result, wasEscape = true)
         }
 
+        // aw -> ă  (NGOẠI LỆ vần "ua"/"ưa": phím w biến 'u' thành 'ư' chứ KHÔNG biến 'a' thành 'ă')
+        if (lastBase == 'a' && word.length >= 2) {
+            val prevIdx = word.length - 2
+            val prev = word[prevIdx]
+            val prevBase = stripTone(prev).lowercaseChar()
+            val beforePrevBase = if (prevIdx >= 1) stripTone(word[prevIdx - 1]).lowercaseChar() else ' '
+
+            // SỬA LỖI (người dùng phản ánh: gõ "nuawx" ra "nuẵ" thay vì "nữa"): "ua" + w phải ra
+            // "ưa" (nưa/mưa/tưa...), vì "uă" không phải vần tiếng Việt thông thường. Ngoại lệ duy nhất
+            // là "qu" - chữ u đứng sau q là PHẦN CỦA PHỤ ÂM (qu), không phải nguyên âm, nên "quaw"
+            // vẫn ra "quă" (quăn, quặng...). Thanh điệu (nếu đã gõ trước) chuyển lên 'ư' - đúng quy
+            // tắc đặt dấu của vần "ưa": nữa, mứa, chứa...
+            if (prevBase == 'u' && beforePrevBase != 'q') {
+                val tone = if (existingTone != Tone.NONE) existingTone else extractTone(prev)
+                val newU = if (prev.isUpperCase()) 'Ư' else 'ư'
+                val chars = word.toCharArray()
+                chars[prevIdx] = if (tone != Tone.NONE) applyToneToChar(newU, tone) else newU
+                chars[chars.size - 1] = stripTone(lastChar) // 'a' giữ nguyên, thanh đã chuyển lên ư
+                return TelexResult(String(chars), wasEscape = false)
+            }
+            // Gõ w lần 2 sau "ưa" -> hoàn tác về "ua" + thêm 'w' (thoát Telex, giống escape của ư/ơ/ă).
+            if (prevBase == 'ư') {
+                val tone = extractTone(prev)
+                val plainU = if (prev.isUpperCase()) 'U' else 'u'
+                val chars = word.toCharArray()
+                chars[prevIdx] = if (tone != Tone.NONE) applyToneToChar(plainU, tone) else plainU
+                return TelexResult(String(chars) + (if (keyIsUpper) 'W' else 'w'), wasEscape = true)
+            }
+        }
+
         // aw -> ă
         if (lastBase == 'a') {
             val rep = if (lastChar.isUpperCase()) 'Ă' else 'ă'
