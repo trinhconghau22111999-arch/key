@@ -299,6 +299,11 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         lastEditorSessionKey = sessionKey
         // [Mục 15] Ô mật khẩu -> tắt Telex.
         telexSuppressedForField = isPasswordField(info)
+        // [Mục 21] Tạo sẵn bộ phát tiếng click ngay khi bàn phím hiện (không đợi tới phím đầu tiên)
+        // để tiếng không bị trễ ở lần bấm đầu.
+        if (keyClickPlayer == null && KeyClickSettings.effectiveVolumePercent(this) > 0) {
+            keyClickPlayer = KeyClickPlayer(this)
+        }
         // [Mục 17] Ô nhập mới/khởi động lại: bộ đệm từ phải đọc lại từ ô nhập.
         invalidateWordBuffer()
         currentWordEscaped = false
@@ -862,7 +867,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private fun playKeyClick() {
         val volume = KeyClickSettings.effectiveVolumePercent(this)
         if (volume <= 0) return
-        val player = keyClickPlayer ?: KeyClickPlayer().also { keyClickPlayer = it }
+        val player = keyClickPlayer ?: KeyClickPlayer(this).also { keyClickPlayer = it }
         player.play(volume)
     }
 

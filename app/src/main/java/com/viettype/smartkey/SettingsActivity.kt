@@ -668,7 +668,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun playKeyClickPreview(percent: Int) {
         if (percent <= 0) return
-        val player = keyClickPreviewPlayer ?: KeyClickPlayer().also { keyClickPreviewPlayer = it }
+        val player = keyClickPreviewPlayer ?: KeyClickPlayer(this).also { keyClickPreviewPlayer = it }
         player.play(percent)
     }
 
