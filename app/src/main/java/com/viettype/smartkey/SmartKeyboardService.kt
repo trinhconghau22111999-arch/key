@@ -39,6 +39,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.barcode.BarcodeScanner
+import android.media.AudioManager
 import android.os.SystemClock
 import android.view.inputmethod.EditorInfo
 import java.util.concurrent.ExecutorService
@@ -103,8 +104,6 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     // [Mục 15] Ô mật khẩu: tắt Telex để chữ gõ ra đúng nguyên văn.
     private var telexSuppressedForField = false
 
-    // [Mục 21] Âm thanh bấm phím (tự phát qua AudioTrack, có chỉnh âm lượng - xem KeyClickPlayer).
-    private var keyClickPlayer: KeyClickPlayer? = null
 
     private lateinit var rootContainer: FrameLayout
     private lateinit var keyboardBody: LinearLayout
@@ -299,11 +298,6 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         lastEditorSessionKey = sessionKey
         // [Mục 15] Ô mật khẩu -> tắt Telex.
         telexSuppressedForField = isPasswordField(info)
-        // [Mục 21] Tạo sẵn bộ phát tiếng click ngay khi bàn phím hiện (không đợi tới phím đầu tiên)
-        // để tiếng không bị trễ ở lần bấm đầu.
-        if (keyClickPlayer == null && KeyClickSettings.effectiveVolumePercent(this) > 0) {
-            keyClickPlayer = KeyClickPlayer(this)
-        }
         // [Mục 17] Ô nhập mới/khởi động lại: bộ đệm từ phải đọc lại từ ô nhập.
         invalidateWordBuffer()
         currentWordEscaped = false
@@ -499,8 +493,6 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         ledIdleHandler.removeCallbacksAndMessages(null)
         mainHandler.removeCallbacksAndMessages(null)
         keyTimerHandler.removeCallbacksAndMessages(null)
-        keyClickPlayer?.release()
-        keyClickPlayer = null
         speechRecognizer?.destroy()
         cachedBackgroundBitmap?.recycle()
         cachedBackgroundBitmap = null
@@ -864,11 +856,16 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     /** [Mục 21] Phát tiếng bấm phím theo âm lượng đặt trong Cài đặt (đọc lại mỗi lần bấm nên
      *  đổi thanh kéo xong có hiệu lực ngay, kể cả khi bàn phím xem trước đang mở). */
-    private fun playKeyClick() {
+    private fun playKeyClick(code: String) {
         val volume = KeyClickSettings.effectiveVolumePercent(this)
         if (volume <= 0) return
-        val player = keyClickPlayer ?: KeyClickPlayer(this).also { keyClickPlayer = it }
-        player.play(volume)
+        val effect = when (code) {
+            "BACKSPACE" -> AudioManager.FX_KEYPRESS_DELETE
+            "SPACE" -> AudioManager.FX_KEYPRESS_SPACEBAR
+            "ENTER" -> AudioManager.FX_KEYPRESS_RETURN
+            else -> AudioManager.FX_KEYPRESS_STANDARD
+        }
+        KeyClickSettings.play(this, volume, effect)
     }
 
     private fun displayLabelFor(code: String): String = when (code) {
@@ -923,7 +920,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                     // xong nên cảm giác "rung trễ" dù chỉ vài chục mili-giây). Trừ BACKSPACE vì
                     // phím này tự rung theo từng lần xoá khi giữ tay lặp lại (xem handleBackspace()).
                     if (code != "BACKSPACE") VibrationSettings.tick(this@SmartKeyboardService)
-                    playKeyClick()
+                    playKeyClick(code)
                     backspaceFired = false
                     if (code == "BACKSPACE") {
                         repeatRunnable = object : Runnable {

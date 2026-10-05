@@ -664,18 +664,8 @@ class SettingsActivity : AppCompatActivity() {
     // ============================== ÂM THANH KHI GÕ ==============================
 
     /** Phát thử tiếng bấm phím ngay trong màn Cài đặt (khi kéo thanh/thả tay). */
-    private var keyClickPreviewPlayer: KeyClickPlayer? = null
-
     private fun playKeyClickPreview(percent: Int) {
-        if (percent <= 0) return
-        val player = keyClickPreviewPlayer ?: KeyClickPlayer(this).also { keyClickPreviewPlayer = it }
-        player.play(percent)
-    }
-
-    override fun onDestroy() {
-        keyClickPreviewPlayer?.release()
-        keyClickPreviewPlayer = null
-        super.onDestroy()
+        KeyClickSettings.play(this, percent)
     }
 
     private fun buildKeyClickSection(): View {
@@ -694,10 +684,24 @@ class SettingsActivity : AppCompatActivity() {
         box.addView(switchRow)
 
         box.addView(bodyText(
-            "Kéo thanh để chỉnh độ lớn tiếng bấm phím - kéo về 0% để tắt hẳn. Tiếng phát qua kênh Báo thức " +
-                "nên không bị ảnh hưởng khi bạn chỉnh âm lượng Media hay để máy ở chế độ im lặng/rung. " +
-                "(Vẫn không thể vượt qua âm lượng Báo thức của máy: nếu Báo thức để 0 thì sẽ không nghe thấy.)"
+            "Kéo thanh để chỉnh độ lớn tiếng bấm phím - kéo về 0% để tắt hẳn. Đây là tiếng bấm phím của " +
+                "hệ thống (giống Gboard) nên chỉ kêu khi máy bật \"Âm thanh khi chạm\" trong Cài đặt hệ thống, " +
+                "và bị im khi máy để chế độ im lặng."
         ))
+
+        // Máy đang TẮT "Âm thanh khi chạm" thì bàn phím sẽ không có tiếng - báo rõ + nút mở cài đặt âm thanh.
+        if (!KeyClickSettings.isSystemTouchSoundEnabled(ctx)) {
+            box.addView(bodyText(
+                "⚠ Máy đang TẮT \"Âm thanh khi chạm\" nên bàn phím sẽ không có tiếng. " +
+                    "Hãy bật nó trong Cài đặt âm thanh của máy."
+            ).apply { setTextColor(Color.parseColor("#FFB74D")) })
+            box.addView(actionButton("Mở cài đặt âm thanh của máy") {
+                try {
+                    startActivity(android.content.Intent(android.provider.Settings.ACTION_SOUND_SETTINGS))
+                } catch (ignored: Exception) {
+                }
+            })
+        }
 
         val valueLabel = bodyText("${KeyClickSettings.getVolumePercent(ctx)}%").apply {
             setTextColor(Color.WHITE)
