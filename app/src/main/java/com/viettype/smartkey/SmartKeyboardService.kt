@@ -1,5 +1,3 @@
-@file:OptIn(androidx.camera.core.ExperimentalGetImage::class)
-
 package com.viettype.smartkey
 
 import android.animation.ValueAnimator
@@ -26,25 +24,10 @@ import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.barcode.BarcodeScanner
 import android.media.AudioManager
 import android.os.SystemClock
 import android.view.inputmethod.EditorInfo
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Bàn phím tiếng Việt (Telex) + tiếng Anh, có thêm 2 tiện ích đặc trưng ngay
@@ -52,13 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * khung bàn phím, không cần mở app riêng) và NHẬP LIỆU BẰNG GIỌNG NÓI (dùng
  * SpeechRecognizer trực tiếp).
  */
-class SmartKeyboardService : InputMethodService(), LifecycleOwner {
-
-    // LifecycleOwner tối giản tự cấp cho CameraX - CameraX cần 1 LifecycleOwner để tự biết
-    // lúc nào phải giải phóng camera; Service không có sẵn cái này như Activity/Fragment nên
-    // phải tự khai báo và điều khiển bằng tay theo đúng vòng đời camera đang mở/đóng.
-    private val lifecycleRegistry = LifecycleRegistry(this)
-    override val lifecycle: Lifecycle get() = lifecycleRegistry
+class SmartKeyboardService : InputMethodService() {
 
     private enum class Page { LETTERS, SYMBOLS, SYMBOLS2, NUMPAD }
     private enum class CapsMode { OFF, SINGLE_SHIFT, CAPS_LOCK }
@@ -203,29 +180,26 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private var ledAnimator: ValueAnimator? = null
 
-    private var scanOverlay: View? = null
-    private var cameraProvider: ProcessCameraProvider? = null
-    private var camera: androidx.camera.core.Camera? = null
-    private var torchOn = false
-    // Đèn đang bật lúc bàn phím ẩn -> bật lại khi bàn phím hiện lại (camera tự mở lại).
-    private var torchRestorePending = false
-    private var torchButtonView: TextView? = null
-    // [Mục 1] Luồng nền riêng để phân tích khung hình (trước đây chạy ngay trên luồng chính).
-    private var scanExecutor: ExecutorService? = null
-    // Giữ tham chiếu BarcodeScanner để đóng (giải phóng tài nguyên native ML Kit) khi tắt quét.
-    private var barcodeScanner: BarcodeScanner? = null
-    // [Mục 3] Cờ nguyên tử: true = đang "nghỉ" sau khi xử lý 1 mã, bỏ qua mọi khung/kết quả tới.
-    private val scanFrameHandled = AtomicBoolean(false)
-    private var scanRearmRunnable: Runnable? = null
-    // Mã vừa bị bộ lọc ký tự đặc biệt chặn - để chỉ báo 1 lần, không báo liên tục.
+    // Khung quét QR giờ là cửa sổ NỔI riêng (xem FloatingScanService) - bàn phím chỉ giữ trạng thái
+    // phục vụ việc gõ mã quét được vào ô nhập (bộ lọc ký tự, giới hạn quét trùng lặp).
     private var lastBlockedContent: String? = null
-
-    // Quét LIÊN TỤC: không tự đóng khung quét sau khi đọc được 1 mã, cho phép quét
-    // nhiều mã kế tiếp nhau trong cùng 1 lượt mở camera. Theo dõi mã lặp lại để áp
-    // "Giới hạn quét trùng lặp" - quét mã KHÁC thì đếm lại từ đầu (xem ScanHistoryStore).
     private var lastScannedContent: String? = null
     private var duplicateStreak = 0
     private var duplicateLimitToastShown = false
+    private var lastNoInputToastAt = 0L
+
+    private val scanSink = object : ScanBridge.Sink {
+        override fun onScanSessionStarted() = resetScanSession()
+        override fun onScanSessionEnded() = resetScanSession()
+        override fun onScanned(content: String): Long = handleScannedContent(content)
+    }
+
+    private fun resetScanSession() {
+        lastBlockedContent = null
+        lastScannedContent = null
+        duplicateStreak = 0
+        duplicateLimitToastShown = false
+    }
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var micOverlay: View? = null
@@ -235,7 +209,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     override fun onCreate() {
         super.onCreate()
-        lifecycleRegistry.currentState = Lifecycle.State.CREATED
+        ScanBridge.sink = scanSink
     }
 
     override fun onCreateInputView(): View {
@@ -280,24 +254,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         return rootContainer
     }
 
-    /** Bấm nút Back của hệ thống (hàng phím đa nhiệm back/home/đa nhiệm dưới màn hình) trong
-     *  lúc đang mở khung quét QR: coi như "Huỷ" - đóng camera + khung quét, ĐỒNG THỜI tắt
-     *  hẳn bàn phím luôn (không chỉ đóng khung quét mà bàn phím vẫn còn mở). Lần sau người
-     *  dùng mở bàn phím lại thì tự về Trang 1 như bình thường (đã có sẵn ở onStartInputView -
-     *  currentPage luôn reset về Page.LETTERS mỗi lần mở lại). Chỉ can thiệp khi đang quét;
-     *  Back bình thường (không quét) vẫn để hệ thống xử lý như cũ. */
-    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
-        if (keyCode == android.view.KeyEvent.KEYCODE_BACK && scanOverlay != null) {
-            closeScanOverlay()
-            requestHideSelf(0)
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
-    }
-
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         // Đến hạn tự xoá lịch sử quét (nếu người dùng đã bật trong Cài đặt) thì xoá luôn.
         ScanHistoryStore.autoClearIfDue(this)
         // [Mục 19] Nhận diện "cùng 1 ô nhập, chỉ bị khởi động lại" (restarting) - lúc này KHÔNG được
@@ -472,10 +430,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
-        // KHÔNG tự đóng khung quét QR ở đây nữa: onFinishInputView() còn bị gọi cả những lúc
-        // con trỏ chỉ RỜI Ô NHẬP TRONG CHỐC LÁT (ví dụ quét mã xong bấm Enter) chứ không hẳn là
-        // người dùng muốn thoát quét - trước đây khiến khung quét tự ẩn ngoài ý muốn. Giờ khung
-        // quét QR đứng yên cho tới khi người dùng tự bấm "Huỷ" (xem closeScanOverlay()).
+        // Khung quét QR là cửa sổ nổi riêng (FloatingScanService) - không đóng theo bàn phím.
         closeMicOverlay()
         // [Mục 13] Dọn tài nguyên khi bàn phím ẩn: huỷ timer giữ phím (lặp xoá/popup dấu), gỡ
         // bong bóng + popup đang nổi, tạm dừng hiệu ứng LED (đỡ tốn pin khi không ai nhìn thấy).
@@ -484,70 +439,6 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         ledIdleHandler.removeCallbacks(ledIdleRunnable)
         pauseLedForIdle()
         invalidateWordBuffer()
-    }
-
-    // Cua so ban phim THAT SU an di (nguoi dung an ban phim, chuyen app...) khac voi
-    // onFinishInputView() (con bi goi khi chi doi o nhap, ban phim van hien). Khung quet QR la
-    // 1 View nam trong cua so ban phim nen an theo; camera gan voi lifecycleRegistry nen phai ha
-    // lifecycle xuong CREATED o day de CameraX TU DONG DONG camera (khong con chay ngam khi khong
-    // ai nhin thay) - nhung KHONG dong khung quet: scanOverlay van giu nguyen, camera chi bi
-    // dong tam. Khung quet chi tat han khi nguoi dung bam "Huy" (closeScanOverlay()).
-    override fun onWindowHidden() {
-        super.onWindowHidden()
-        if (lifecycleRegistry.currentState != Lifecycle.State.DESTROYED) {
-            lifecycleRegistry.currentState = Lifecycle.State.CREATED
-        }
-        // Dong camera thi den flash cung tat theo - dua nut den ve dung trang thai tat.
-        // Nhớ là đèn đang bật để bật lại khi bàn phím hiện lại (xem onWindowShown()).
-        if (scanOverlay != null && torchOn) {
-            torchRestorePending = true
-            torchOn = false
-            applyTorchButtonUi()
-        }
-    }
-
-    // Ban phim hien lai: dua lifecycle len RESUMED de CameraX tu mo lai camera cho khung quet
-    // dang cho san (neu co) - nguoi dung khong phai bat lai.
-    override fun onWindowShown() {
-        super.onWindowShown()
-        if (lifecycleRegistry.currentState != Lifecycle.State.DESTROYED) {
-            lifecycleRegistry.currentState = Lifecycle.State.RESUMED
-        }
-        if (torchRestorePending && scanOverlay != null) restoreTorchAfterShow(0)
-    }
-
-    /** Bật lại đèn flash sau khi camera mở lại. Camera cần chút thời gian để mở nên enableTorch()
-     *  có thể bị từ chối ở lần đầu -> thử lại vài lần, mỗi lần cách ~300ms. Nếu bàn phím lại ẩn
-     *  giữa chừng thì dừng (cờ torchRestorePending vẫn giữ để lần hiện sau bật tiếp). */
-    private fun restoreTorchAfterShow(attempt: Int) {
-        if (!torchRestorePending || scanOverlay == null) { torchRestorePending = false; return }
-        if (lifecycleRegistry.currentState != Lifecycle.State.RESUMED) return
-        val cam = camera
-        if (cam == null || attempt > 10) { torchRestorePending = false; return }
-        val future = try { cam.cameraControl.enableTorch(true) } catch (e: Exception) { null }
-        if (future == null) {
-            mainHandler.postDelayed({ restoreTorchAfterShow(attempt + 1) }, 300)
-            return
-        }
-        future.addListener({
-            val ok = try { future.get(); true } catch (e: Exception) { false }
-            if (!torchRestorePending || scanOverlay == null) return@addListener
-            if (ok) {
-                torchRestorePending = false
-                torchOn = true
-                applyTorchButtonUi()
-            } else {
-                mainHandler.postDelayed({ restoreTorchAfterShow(attempt + 1) }, 300)
-            }
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    private fun applyTorchButtonUi() {
-        torchButtonView?.text = if (torchOn) "💡" else "🔦"
-        torchButtonView?.background = GradientDrawable().apply {
-            cornerRadius = dp(6).toFloat()
-            setColor(if (torchOn) ThemeSettings.getAccentColor(this@SmartKeyboardService) else Color.parseColor("#88000000"))
-        }
     }
 
     /** [Mục 16] Con trỏ/nội dung ô nhập bị đổi TỪ BÊN NGOÀI (người dùng chạm sang chỗ khác, app
@@ -585,7 +476,6 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     override fun onDestroy() {
         super.onDestroy()
-        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         ledAnimator?.cancel()
         ledIdleHandler.removeCallbacksAndMessages(null)
         mainHandler.removeCallbacksAndMessages(null)
@@ -593,10 +483,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         speechRecognizer?.destroy()
         cachedBackgroundBitmap?.recycle()
         cachedBackgroundBitmap = null
-        // Bàn phím có thể bị hệ thống huỷ hẳn (onDestroy) trong lúc khung quét QR vẫn đang mở
-        // (giờ không còn tự đóng theo onFinishInputView nữa) - phải tự giải phóng camera ở đây,
-        // nếu không sẽ rò rỉ camera/đèn flash vẫn bật ngầm dù bàn phím đã biến mất.
-        if (scanOverlay != null) closeScanOverlay()
+        // Bàn phím bị huỷ hẳn (vd người dùng đổi sang bàn phím khác) thì không còn ai gõ mã quét
+        // vào ô nhập - tắt luôn khung quét nổi để trả camera, tránh chạy ngầm vô ích.
+        if (ScanBridge.sink === scanSink) ScanBridge.sink = null
+        FloatingScanService.stop()
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
@@ -607,13 +497,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         // hướng trước đó. Chủ động dựng lại toàn bộ view ngay khi orientation đổi để bàn
         // phím thu nhỏ lại đúng lúc vừa xoay ngang, không phải đợi đóng-mở lại bàn phím.
         if (::rootContainer.isInitialized) {
-            // onCreateInputView() bên dưới dựng HẲN 1 rootContainer mới - khung quét QR/ghi âm
-            // đang mở (nếu có) đang là view con của rootContainer CŨ nên sẽ bị "mồ côi": không
-            // ai còn nhìn thấy nữa nhưng camera/mic thật vẫn chạy ngầm phía sau (không có cách
-            // nào bấm "Huỷ" vì nút đó cũng đã mất theo). Đóng hẳn 2 khung này TRƯỚC khi dựng lại
-            // UI để giải phóng camera/mic đúng lúc, người dùng tự mở quét/ghi âm lại sau khi
-            // xoay xong nếu cần.
-            if (scanOverlay != null) closeScanOverlay()
+            // onCreateInputView() bên dưới dựng HẲN 1 rootContainer mới - khung ghi âm đang mở
+            // (nếu có) là view con của rootContainer CŨ nên sẽ bị "mồ côi" (mic vẫn chạy ngầm mà
+            // không còn nút Huỷ). Đóng hẳn khung này TRƯỚC khi dựng lại UI. Khung quét QR là cửa
+            // sổ nổi riêng nên không bị ảnh hưởng bởi việc xoay màn hình.
             if (micOverlay != null) closeMicOverlay()
             setInputView(onCreateInputView())
         }
@@ -1570,167 +1457,61 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     // ============================== QUÉT MÃ QR / VẠCH ==============================
 
+    /** Nút QR: mở khung quét NỔI riêng (FloatingScanService). Khung này không thuộc cửa sổ bàn
+     *  phím nên bàn phím tự ẩn đi thì khung quét vẫn còn - chỉ tắt khi bấm "Huỷ". */
     private fun onScanButtonPressed() {
+        if (FloatingScanService.active) {
+            showToast("Khung quét nổi đang chạy - bấm Huỷ trên khung đó để tắt.")
+            return
+        }
         if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             startActivity(Intent(this, CameraPermissionRelay::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             return
         }
-        showScanOverlay()
-    }
-
-    private fun showScanOverlay() {
-        if (scanOverlay != null) return
-        keyboardBody.visibility = View.GONE
-
-        val previewView = PreviewView(this)
-        val overlay = FrameLayout(this).apply {
-            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(280))
-            setBackgroundColor(Color.BLACK)
-            addView(previewView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-            addView(TextView(this@SmartKeyboardService).apply {
-                text = "🔦"
-                setTextColor(Color.WHITE)
-                textSize = 15f
-                setPadding(dp(16), dp(8), dp(16), dp(8))
-                background = GradientDrawable().apply {
-                    cornerRadius = dp(6).toFloat()
-                    setColor(Color.parseColor("#88000000"))
-                }
-                setOnClickListener { toggleTorch() }
-                torchButtonView = this
-            }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).also {
-                it.gravity = Gravity.TOP or Gravity.START
-                it.setMargins(dp(8), dp(8), 0, 0)
-            })
-            addView(TextView(this@SmartKeyboardService).apply {
-                text = "Huỷ"
-                setTextColor(Color.WHITE)
-                textSize = 15f
-                setPadding(dp(16), dp(8), dp(16), dp(8))
-                background = GradientDrawable().apply {
-                    cornerRadius = dp(6).toFloat()
-                    setColor(Color.parseColor("#88000000"))
-                }
-                setOnClickListener { closeScanOverlay() }
-            }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).also {
-                it.gravity = Gravity.TOP or Gravity.END
-                it.setMargins(0, dp(8), dp(8), 0)
-            })
-        }
-        scanOverlay = overlay
-        rootContainer.addView(overlay)
-
-        val providerFuture = ProcessCameraProvider.getInstance(this)
-        providerFuture.addListener({
+        if (!FloatingScanService.canDrawOverlays(this)) {
+            showToast("Cần cấp quyền \"Hiển thị trên các ứng dụng khác\" để dùng khung quét nổi.")
             try {
-                // Người dùng đã bấm Huỷ trước khi camera kịp khởi động -> không mở camera nữa (tránh rò rỉ).
-                if (scanOverlay !== overlay) return@addListener
-                val provider = providerFuture.get()
-                cameraProvider = provider
-                val preview = androidx.camera.core.Preview.Builder().build().also {
-                    it.setSurfaceProvider(previewView.surfaceProvider)
-                }
-                val analysis = ImageAnalysis.Builder()
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-                val scanner = BarcodeScanning.getClient()
-                try { barcodeScanner?.close() } catch (ignored: Exception) { }
-                barcodeScanner = scanner
-                scanFrameHandled.set(false)
-                lastBlockedContent = null
-                // [Mục 1] Phân tích khung hình trên luồng NỀN riêng, không chiếm luồng chính (UI).
-                val executor = scanExecutor ?: Executors.newSingleThreadExecutor().also { scanExecutor = it }
-                analysis.setAnalyzer(executor) { imageProxy ->
-                    analyzeFrameForBarcode(imageProxy, scanner)
-                }
-                provider.unbindAll()
-                camera = provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
-            } catch (e: Exception) {
-                showToast("Không mở được camera: ${e.message}")
-                closeScanOverlay()
+                startActivity(
+                    Intent(
+                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:$packageName")
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (ignored: Exception) {
             }
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    /** Bật/tắt đèn flash của camera sau trong lúc đang quét mã. */
-    private fun toggleTorch() {
-        val cam = camera ?: return
-        if (cam.cameraInfo.hasFlashUnit() != true) {
-            showToast("Thiết bị không có đèn flash.")
             return
         }
-        torchRestorePending = false // người dùng tự bấm đèn -> bỏ yêu cầu bật lại tự động đang chờ
-        torchOn = !torchOn
-        cam.cameraControl.enableTorch(torchOn)
-        applyTorchButtonUi()
+        if (!FloatingScanService.start(this)) showToast("Không mở được khung quét nổi.")
     }
 
-    @androidx.camera.core.ExperimentalGetImage
-    /** [Mục 2] Chạy LIÊN TỤC (~30 lần/giây) trên luồng nền - bọc try/catch toàn bộ và LUÔN đóng
-     *  imageProxy (kể cả khi lỗi), nếu không camera sẽ "tắc" (ngừng gửi khung mới) hoặc lỗi lọt
-     *  ra làm sập cả tiến trình bàn phím. */
-    private fun analyzeFrameForBarcode(imageProxy: ImageProxy, scanner: BarcodeScanner) {
-        try {
-            val mediaImage = imageProxy.image
-            // [Mục 3] Đang "nghỉ" sau khi xử lý 1 mã -> bỏ qua khung này, khỏi tốn công nhận dạng.
-            if (mediaImage == null || scanFrameHandled.get()) {
-                imageProxy.close()
-                return
-            }
-            val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-            scanner.process(image)
-                .addOnSuccessListener { barcodes -> handleBarcodeResults(barcodes) }
-                .addOnFailureListener { /* bỏ qua 1 khung lỗi - sẽ có khung kế tiếp */ }
-                .addOnCompleteListener { imageProxy.close() }
-        } catch (e: Exception) {
-            try { imageProxy.close() } catch (ignored: Exception) { }
-        }
-    }
-
-    /** [Mục 5] Lấy nội dung mã: ưu tiên rawValue, rồi displayValue, cuối cùng giải mã rawBytes
-     *  (UTF-8, nếu có ký tự lỗi thì thử ISO-8859-1) - mã chứa tiếng Việt/nhị phân đọc đúng hơn. */
-    private fun extractBarcodeText(barcode: Barcode): String? {
-        val raw = barcode.rawValue
-        if (!raw.isNullOrEmpty()) return raw
-        val shown = barcode.displayValue
-        if (!shown.isNullOrEmpty()) return shown
-        val bytes = barcode.rawBytes ?: return null
-        if (bytes.isEmpty()) return null
-        return try {
-            val utf8 = String(bytes, Charsets.UTF_8)
-            if (utf8.contains('\uFFFD')) String(bytes, Charsets.ISO_8859_1) else utf8
-        } catch (e: Exception) {
-            String(bytes, Charsets.ISO_8859_1)
-        }
-    }
-
-    private fun scheduleScanRearm(delayMs: Long) {
-        scanRearmRunnable?.let { mainHandler.removeCallbacks(it) }
-        val r = Runnable { scanFrameHandled.set(false) }
-        scanRearmRunnable = r
-        mainHandler.postDelayed(r, delayMs)
-    }
-
-    private fun handleBarcodeResults(barcodes: List<Barcode>) {
-        if (scanOverlay == null || scanFrameHandled.get()) return
-        val content = barcodes.asSequence().mapNotNull { extractBarcodeText(it) }.firstOrNull() ?: return
-        // [Mục 3] Cờ nguyên tử: chỉ 1 kết quả được xử lý mỗi lượt, dù nhiều khung về cùng lúc.
-        if (!scanFrameHandled.compareAndSet(false, true)) return
-
-        var rearmDelay = SCAN_REARM_DELIVERED_MS
+    /** Nhận 1 mã từ khung quét nổi (qua [ScanBridge]) và gõ vào ô nhập đang chọn. Trả về số
+     *  mili-giây khung quét cần nghỉ trước khi nhận mã kế tiếp. */
+    private fun handleScannedContent(content: String): Long {
         try {
             // Bộ lọc ký tự đặc biệt (Cài đặt -> "Bộ lọc ký tự đặc biệt").
             val blockedChar = ScanFilterSettings.findBlockedChar(this, content)
             if (blockedChar != null) {
-                rearmDelay = SCAN_REARM_IGNORED_MS
                 if (content != lastBlockedContent) {
                     lastBlockedContent = content
                     showToast("Mã có ký tự đặc biệt \"$blockedChar\" nên không xuất. Quét mã khác để tiếp tục.")
                 }
-                return
+                return SCAN_REARM_IGNORED_MS
             }
             lastBlockedContent = null
+
+            // Khung quét nổi vẫn chạy khi bàn phím ẩn / chưa có ô nhập nào được chọn: không có
+            // InputConnection thì chưa xuất mã (không tính vào giới hạn lặp, không lưu lịch sử) -
+            // người dùng chạm vào ô nhập rồi quét lại là được.
+            val ic = currentInputConnection
+            if (ic == null) {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastNoInputToastAt > 4000L) {
+                    lastNoInputToastAt = now
+                    showToast("Chưa có ô nhập nào đang được chọn - chạm vào ô cần nhập rồi quét lại.")
+                }
+                return SCAN_REARM_IGNORED_MS
+            }
 
             // Giới hạn quét trùng lặp (giống QR-CODE): cùng 1 mã được xuất tối đa N lần LIÊN TIẾP,
             // N chỉnh trong Cài đặt (mặc định 2). Quét mã KHÁC thì đếm lại từ đầu.
@@ -1739,65 +1520,31 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             if (isSameAsLast && duplicateStreak >= duplicateLimit) {
                 // Đã đạt giới hạn cho ĐÚNG mã này - ngừng xuất thêm, chỉ báo 1 lần (không báo
                 // liên tục mỗi khung hình) cho tới khi người dùng đưa mã KHÁC vào.
-                rearmDelay = SCAN_REARM_IGNORED_MS
                 if (!duplicateLimitToastShown) {
                     showToast("Đã đạt giới hạn quét lặp ($duplicateLimit lần) cho mã này. Quét mã khác để tiếp tục.")
                     duplicateLimitToastShown = true
                 }
-                return
+                return SCAN_REARM_IGNORED_MS
             }
             duplicateStreak = if (isSameAsLast) duplicateStreak + 1 else 1
             lastScannedContent = content
             duplicateLimitToastShown = false
 
             markSelfEdit()
-            currentInputConnection?.commitText(content, 1)
-            // Yêu cầu: sau mỗi mã quét ra, tự động xuống dòng bằng ENTER CỨNG (gửi thẳng
-            // KEYCODE_ENTER qua sendKeyEvent - giống hệt phím Enter thường của bàn phím),
-            // KHÔNG dùng performEditorAction (vốn có thể bị ô nhập diễn giải thành "Xong"/
-            // "Tìm kiếm"... tuỳ IME option của app, không phải xuống dòng thật).
-            currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
-            currentInputConnection?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
+            ic.commitText(content, 1)
+            // Sau mỗi mã quét ra, tự động xuống dòng bằng ENTER CỨNG (gửi thẳng KEYCODE_ENTER qua
+            // sendKeyEvent - giống hệt phím Enter thường của bàn phím), KHÔNG dùng
+            // performEditorAction (vốn có thể bị ô nhập diễn giải thành "Xong"/"Tìm kiếm"...).
+            ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
+            ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
             invalidateWordBuffer()
             ScanHistoryStore.addEntry(this, content)
             VibrationSettings.tick(this)
+            return SCAN_REARM_DELIVERED_MS
         } catch (e: Exception) {
             // Không để lỗi xử lý 1 mã làm sập cả bàn phím.
-        } finally {
-            if (scanOverlay != null) scheduleScanRearm(rearmDelay)
+            return SCAN_REARM_DELIVERED_MS
         }
-    }
-
-    private fun closeScanOverlay() {
-        if (torchOn) {
-            try {
-                camera?.cameraControl?.enableTorch(false)
-            } catch (ignored: Exception) {
-            }
-        }
-        torchOn = false
-        torchRestorePending = false // bấm Huỷ -> không bật lại đèn nữa
-        torchButtonView = null
-        camera = null
-        scanOverlay?.let { rootContainer.removeView(it) }
-        scanOverlay = null
-        scanRearmRunnable?.let { mainHandler.removeCallbacks(it) }
-        scanRearmRunnable = null
-        scanFrameHandled.set(false)
-        try {
-            cameraProvider?.unbindAll()
-        } catch (ignored: Exception) {
-        }
-        // Giải phóng ML Kit + luồng phân tích nền (sau khi đã gỡ camera).
-        try { barcodeScanner?.close() } catch (ignored: Exception) { }
-        barcodeScanner = null
-        scanExecutor?.shutdown()
-        scanExecutor = null
-        keyboardBody.visibility = View.VISIBLE
-        lastBlockedContent = null
-        lastScannedContent = null
-        duplicateStreak = 0
-        duplicateLimitToastShown = false
     }
 
     // ============================== NHẬP LIỆU BẰNG GIỌNG NÓI ==============================

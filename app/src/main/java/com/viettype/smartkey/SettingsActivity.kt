@@ -112,6 +112,9 @@ class SettingsActivity : AppCompatActivity() {
         contentBox.addView(sectionTitle("Âm thanh khi gõ"))
         contentBox.addView(buildKeyClickSection())
         contentBox.addView(spacer())
+        contentBox.addView(sectionTitle("Khung quét QR nổi"))
+        contentBox.addView(buildFloatingScanSection())
+        contentBox.addView(spacer())
         contentBox.addView(sectionTitle("Giới hạn quét trùng lặp"))
         contentBox.addView(buildDuplicateScanLimitSection())
         contentBox.addView(spacer())
@@ -617,6 +620,31 @@ class SettingsActivity : AppCompatActivity() {
                 }
             })
         })
+        return box
+    }
+
+    // ============================== KHUNG QUÉT QR NỔI ==============================
+
+    private fun buildFloatingScanSection(): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(bodyText(
+            "Nút QR mở khung quét hiện NỔI riêng trên màn hình: bàn phím tự ẩn đi thì khung quét " +
+                "vẫn còn, chỉ tắt khi bấm Huỷ (trên khung quét hoặc ở thông báo). Kéo vào vùng hình " +
+                "để di chuyển khung. Cần quyền \"Hiển thị trên các ứng dụng khác\"."
+        ))
+        val granted = FloatingScanService.canDrawOverlays(this)
+        box.addView(bodyText(if (granted) "✓ Đã cấp quyền hiển thị nổi." else "✗ Chưa cấp quyền hiển thị nổi."))
+        if (!granted) {
+            box.addView(actionButton("Cấp quyền hiển thị nổi") {
+                try {
+                    startActivity(
+                        Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Không mở được trang cấp quyền: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            })
+        }
         return box
     }
 

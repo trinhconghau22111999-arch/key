@@ -4,6 +4,12 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Khung quét QR NỔI (FloatingScanService): vẽ đè lên app khác + chạy dịch vụ nền loại camera
+         + hiện thông báo "Đang quét" (có nút Huỷ quét). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
@@ -92,6 +98,14 @@
                 android:name="android.view.im"
                 android:resource="@xml/method" />
         </service>
+
+        <!-- Khung quét QR dạng nổi riêng trên màn hình - sống độc lập với cửa sổ bàn phím, chỉ tắt
+             khi người dùng bấm Huỷ. foregroundServiceType="camera" để camera vẫn chạy khi bàn phím
+             đã ẩn / app đang ở nền. -->
+        <service
+            android:name=".FloatingScanService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
 
         <!-- Tạo Uri "content://" an toàn khi chia sẻ file xuất Excel ra app khác,
              thay vì "file://" (bị hệ thống cấm từ Android 7.0 trở lên, gây crash
