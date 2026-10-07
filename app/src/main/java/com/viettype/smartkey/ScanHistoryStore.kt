@@ -97,6 +97,10 @@ object ScanHistoryStore {
     fun getEntries(context: Context): List<ScanEntry> = synchronized(lock) {
         autoClearIfDueLocked(context)
         migrateLegacyLocked(context)
+        readEntriesLocked(context)
+    }
+
+    private fun readEntriesLocked(context: Context): List<ScanEntry> {
         val file = historyFile(context)
         if (!file.exists()) return emptyList()
         val result = ArrayList<ScanEntry>()
@@ -113,7 +117,7 @@ object ScanHistoryStore {
         } catch (ignored: Exception) {
         }
         result.reverse()
-        result
+        return result
     }
 
     fun clearEntries(context: Context) = synchronized(lock) {

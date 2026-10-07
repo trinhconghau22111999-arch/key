@@ -31,9 +31,9 @@ import android.view.inputmethod.EditorInfo
 
 /**
  * Bàn phím tiếng Việt (Telex) + tiếng Anh, có thêm 2 tiện ích đặc trưng ngay
- * trên thanh công cụ: QUÉT MÃ QR/vạch (dùng CameraX + ML Kit, hiện ngay trong
- * khung bàn phím, không cần mở app riêng) và NHẬP LIỆU BẰNG GIỌNG NÓI (dùng
- * SpeechRecognizer trực tiếp).
+ * trên thanh công cụ: QUÉT MÃ QR/vạch (khung quét NỔI riêng - xem FloatingScanService,
+ * bàn phím chỉ nhận mã quét được qua ScanBridge rồi gõ vào ô nhập) và NHẬP LIỆU BẰNG
+ * GIỌNG NÓI (dùng SpeechRecognizer trực tiếp).
  */
 class SmartKeyboardService : InputMethodService() {
 
@@ -145,12 +145,6 @@ class SmartKeyboardService : InputMethodService() {
         private var strokeWidthPx = 0f
         private val fillRect = RectF()
         private val strokeRect = RectF()
-
-        fun setFillColor(color: Int) {
-            if (fillPaint.color == color) return
-            fillPaint.color = color
-            invalidateSelf()
-        }
 
         /** Thay cho GradientDrawable.setStroke(width, color) - CHỈ ghi giá trị vào Paint có sẵn,
          *  không cấp phát object nào, an toàn gọi hàng nghìn lần/giây trong vòng lặp hiệu ứng LED. */
@@ -1579,33 +1573,16 @@ class SmartKeyboardService : InputMethodService() {
             addView(statusText, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).also {
                 it.gravity = Gravity.CENTER
             })
+            // 3 nút Huỷ / Nhập / Gửi chia ĐỀU chiều ngang (mỗi nút weight = 1, cách nhau cùng 1 khoảng).
             addView(LinearLayout(this@SmartKeyboardService).apply {
                 orientation = LinearLayout.HORIZONTAL
-                addView(TextView(this@SmartKeyboardService).apply {
-                    text = "Huỷ"
-                    setTextColor(Color.WHITE)
-                    setPadding(dp(16), dp(8), dp(16), dp(8))
-                    background = GradientDrawable().apply {
-                        cornerRadius = dp(6).toFloat()
-                        setColor(Color.parseColor("#552A1F4A"))
-                    }
-                    setOnClickListener { closeMicOverlay() }
-                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-                addView(TextView(this@SmartKeyboardService).apply {
-                    text = "Gửi"
-                    setTextColor(Color.WHITE)
-                    setPadding(dp(16), dp(8), dp(16), dp(8))
-                    background = GradientDrawable().apply {
-                        cornerRadius = dp(6).toFloat()
-                        setColor(Color.parseColor("#552A1F4A"))
-                    }
-                    setOnClickListener { sendMicTextAndClose() }
-                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).also {
-                    it.marginStart = dp(10)
-                })
-            }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).also {
-                it.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                it.setMargins(0, 0, 0, dp(12))
+                weightSum = 3f
+                addView(micActionButton("Huỷ", first = true) { closeMicOverlay() })
+                addView(micActionButton("Nhập", first = false) { sendMicTextAndClose(pressEnter = false) })
+                addView(micActionButton("Gửi", first = false) { sendMicTextAndClose(pressEnter = true) })
+            }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT).also {
+                it.gravity = Gravity.BOTTOM
+                it.setMargins(dp(16), 0, dp(16), dp(12))
             })
         }
         micOverlay = overlay
@@ -1623,8 +1600,8 @@ class SmartKeyboardService : InputMethodService() {
                 override fun onResults(results: android.os.Bundle?) {
                     val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                     if (!text.isNullOrBlank()) micRecognizedText = text
-                    // Không tự gửi & đóng ở đây nữa - người dùng chủ động bấm "Gửi" khi
-                    // đã ưng ý với nội dung đang nhận dạng (xem sendMicTextAndClose()).
+                    // Không tự nhập & đóng ở đây nữa - người dùng chủ động bấm "Nhập" (chỉ nhập)
+                    // hoặc "Gửi" (nhập + Enter) khi đã ưng ý với nội dung đang nhận dạng.
                 }
                 override fun onError(error: Int) {
                     closeMicOverlay()
@@ -1647,14 +1624,43 @@ class SmartKeyboardService : InputMethodService() {
         }
     }
 
-    /** Gửi nội dung đang nhận dạng được (dù là kết quả tạm hay đã chốt) vào ô nhập, rồi đóng
-     *  khung ghi âm - thay cho nút "Dừng" cũ vốn chỉ đóng khung mà không gửi gì cả. */
-    private fun sendMicTextAndClose() {
+    /** 1 nút của khung ghi âm: chiếm đúng 1/3 chiều ngang, chữ căn giữa; [first] = nút đầu nên không
+     *  cần khoảng cách bên trái (các nút sau cách nút trước dp(10)) -> 3 nút luôn đều nhau. */
+    private fun micActionButton(label: String, first: Boolean, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(6).toFloat()
+                setColor(Color.parseColor("#552A1F4A"))
+            }
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
+                if (!first) it.marginStart = dp(10)
+            }
+        }
+
+    /** Đưa nội dung đang nhận dạng được (dù là kết quả tạm hay đã chốt) vào ô nhập rồi đóng khung
+     *  ghi âm.
+     *  - "Nhập" ([pressEnter] = false): chỉ nhập chữ, thêm 1 dấu cách phía sau để gõ tiếp.
+     *  - "Gửi" ([pressEnter] = true): nhập chữ rồi bấm ENTER CỨNG (gửi thẳng KEYCODE_ENTER qua
+     *    sendKeyEvent như phím Enter thường, KHÔNG dùng performEditorAction). Không có chữ nào
+     *    nhận dạng được thì không gửi Enter (tránh gửi ô trống). */
+    private fun sendMicTextAndClose(pressEnter: Boolean) {
         val text = micRecognizedText
         if (text.isNotBlank()) {
+            val ic = currentInputConnection
             markSelfEdit()
-            currentInputConnection?.commitText("$text ", 1)
-            clearWordBuffer() // kết thúc bằng dấu cách -> từ đang gõ rỗng
+            if (pressEnter) {
+                ic?.commitText(text, 1)
+                ic?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
+                ic?.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
+            } else {
+                ic?.commitText("$text ", 1)
+            }
+            clearWordBuffer() // kết thúc bằng dấu cách / xuống dòng -> từ đang gõ rỗng
         }
         closeMicOverlay()
     }

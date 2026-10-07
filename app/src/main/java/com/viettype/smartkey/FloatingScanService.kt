@@ -10,6 +10,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -108,6 +109,7 @@ class FloatingScanService : Service(), LifecycleOwner {
 
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
     private var previewView: PreviewView? = null
     private var torchButton: TextView? = null
 
@@ -289,11 +291,23 @@ class FloatingScanService : Service(), LifecycleOwner {
         return try {
             wm.addView(root, lp)
             overlayView = root
+            overlayParams = lp
             true
         } catch (e: Exception) {
             toast("Không hiện được khung quét nổi - kiểm tra quyền \"Hiển thị trên các ứng dụng khác\".")
             false
         }
+    }
+
+    /** Xoay màn hình: kéo khung về lại trong vùng nhìn thấy (vị trí cũ có thể nằm ngoài màn hình mới). */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val view = overlayView ?: return
+        val lp = overlayParams ?: return
+        val m = resources.displayMetrics
+        lp.x = lp.x.coerceIn(0, maxOf(0, m.widthPixels - lp.width))
+        lp.y = lp.y.coerceIn(0, maxOf(0, m.heightPixels - lp.height))
+        try { windowManager?.updateViewLayout(view, lp) } catch (ignored: Exception) { }
     }
 
     private fun pillButton(ctx: Context, label: String, onClick: () -> Unit): TextView = TextView(ctx).apply {
@@ -439,6 +453,7 @@ class FloatingScanService : Service(), LifecycleOwner {
         scanExecutor = null
         overlayView?.let { v -> try { windowManager?.removeView(v) } catch (ignored: Exception) { } }
         overlayView = null
+        overlayParams = null
         previewView = null
         torchButton = null
         ScanBridge.sink?.onScanSessionEnded()
