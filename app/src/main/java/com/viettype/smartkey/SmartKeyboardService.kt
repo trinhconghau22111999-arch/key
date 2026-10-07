@@ -129,6 +129,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
      *  hoá (0..1) của phím đó trong lưới, dùng để tính độ trễ pha khi hiệu ứng chạy qua. */
     private data class LedKeySlot(val drawable: LedKeyDrawable, val normX: Float, val normY: Float)
     private val ledKeySlots = mutableListOf<LedKeySlot>()
+    // Khe viền riêng của 4 phím hàng tiện ích - rebuildKeyRows() (đổi trang phím) clear() cả
+    // ledKeySlots nên phải nạp lại các khe này, nếu không hàng tiện ích mất viền LED cho tới khi
+    // dựng lại toàn bộ (giờ không còn dựng lại mỗi lần bàn phím hiện nữa - xem refreshTheme()).
+    private val utilityLedSlots = mutableListOf<LedKeySlot>()
 
     // TOI UU LON NHAT (nguoi dung phan anh: "thinh thoang go khong an, khong rung - nghi la co
     // co che don rac qua nhieu, dung xong khong xoa"): DUNG NGAY - day chinh la nguyen nhan gay
@@ -263,6 +267,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         // lập tức - xem giải thích đầy đủ hơn ở refreshTheme() (lỗi y hệt).
         rebuildKeyRows()
         utilityRowView = buildUtilityRow()
+        builtLayoutSignature = layoutSignature()
         keyboardBody.addView(utilityRowView)
         keyboardBody.addView(rowsHost)
 
@@ -349,11 +354,35 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             classType == android.text.InputType.TYPE_CLASS_DATETIME
     }
 
+    // Chu ky cua moi thu quyet dinh cach DUNG phim/hang tien ich (xem rebuildKeyRows() va
+    // buildUtilityRow()): giao dien Sang/Toi, co anh nen hay khong (phim trong suot), hang so luon
+    // bat, ngon ngu (nhan phim cach), huong man hinh (chieu cao hang phim). Khong doi -> khong can dung lai.
+    private var builtLayoutSignature: String? = null
+    private var builtPage: Page? = null
+
+    private fun layoutSignature(): String = buildString {
+        append(ThemeSettings.isDarkTheme(this@SmartKeyboardService)).append('|')
+        append(ThemeSettings.hasBackgroundImage(this@SmartKeyboardService)).append('|')
+        append(NumberRowSettings.isEnabled(this@SmartKeyboardService)).append('|')
+        append(LocaleSettings.getCurrentLocale(this@SmartKeyboardService).code).append('|')
+        append(isLandscape())
+    }
+
     /** Vẽ lại nền khối bàn phím + hàng tiện ích + toàn bộ phím theo màu viền/nền sáng-tối
      *  đang chọn trong Cài đặt (Màu sắc). Gọi mỗi lần bàn phím hiện lên để áp dụng ngay
      *  thay đổi vừa chọn mà không cần khởi động lại app/điện thoại. */
     private fun refreshTheme() {
+        // Ảnh nền vốn đã có cache riêng (chỉ decode lại khi file ảnh đổi) nên vẫn gọi mỗi lần.
         applyKeyboardBackground()
+        // TOI UU (ban phim cham dan sau 1-2 ngay): truoc day MOI LAN ban phim hien len (chuyen o
+        // nhap, mo lai app...) deu dung lai TOAN BO phim + hang tien ich tu dau - hang tram
+        // View/Drawable/listener moi moi lan, tao ap luc GC len luong chinh theo thoi gian. Gio
+        // chi dung lai khi thu gi anh huong den cach dung phim THAT SU doi (xem layoutSignature())
+        // hoac trang phim hien tai khac voi trang vua dung. Mau vien LED van duoc ap lai moi lan
+        // qua startLedAnimationIfNeeded() (goi ngay sau refreshTheme() o onStartInputView).
+        val signature = layoutSignature()
+        if (signature == builtLayoutSignature && builtPage == currentPage) return
+        builtLayoutSignature = signature
         // QUAN TRỌNG VỀ THỨ TỰ: rebuildKeyRows() CHẠY TRƯỚC vì nó ledKeySlots.clear() ngay dòng
         // đầu tiên (xoá sạch để dựng lại từ đầu) - nếu buildUtilityRow() chạy trước như cũ, 4
         // khe viền LED vừa đăng ký cho hàng tiện ích (🌐/QR/🎤/123) sẽ BỊ XOÁ MẤT NGAY SAU ĐÓ bởi
@@ -451,6 +480,37 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         ledIdleHandler.removeCallbacks(ledIdleRunnable)
         pauseLedForIdle()
         invalidateWordBuffer()
+    }
+
+    // Cua so ban phim THAT SU an di (nguoi dung an ban phim, chuyen app...) khac voi
+    // onFinishInputView() (con bi goi khi chi doi o nhap, ban phim van hien). Khung quet QR la
+    // 1 View nam trong cua so ban phim nen an theo; camera gan voi lifecycleRegistry nen phai ha
+    // lifecycle xuong CREATED o day de CameraX TU DONG DONG camera (khong con chay ngam khi khong
+    // ai nhin thay) - nhung KHONG dong khung quet: scanOverlay van giu nguyen, camera chi bi
+    // dong tam. Khung quet chi tat han khi nguoi dung bam "Huy" (closeScanOverlay()).
+    override fun onWindowHidden() {
+        super.onWindowHidden()
+        if (lifecycleRegistry.currentState != Lifecycle.State.DESTROYED) {
+            lifecycleRegistry.currentState = Lifecycle.State.CREATED
+        }
+        // Dong camera thi den flash cung tat theo - dua nut den ve dung trang thai tat.
+        if (scanOverlay != null && torchOn) {
+            torchOn = false
+            torchButtonView?.text = "🔦"
+            torchButtonView?.background = GradientDrawable().apply {
+                cornerRadius = dp(6).toFloat()
+                setColor(Color.parseColor("#88000000"))
+            }
+        }
+    }
+
+    // Ban phim hien lai: dua lifecycle len RESUMED de CameraX tu mo lai camera cho khung quet
+    // dang cho san (neu co) - nguoi dung khong phai bat lai.
+    override fun onWindowShown() {
+        super.onWindowShown()
+        if (lifecycleRegistry.currentState != Lifecycle.State.DESTROYED) {
+            lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+        }
     }
 
     /** [Mục 16] Con trỏ/nội dung ô nhập bị đổi TỪ BÊN NGOÀI (người dùng chạm sang chỗ khác, app
@@ -612,6 +672,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
 
     private fun buildUtilityRow(): View {
         cachedHasBackgroundImage = ThemeSettings.hasBackgroundImage(this)
+        ledKeySlots.removeAll(utilityLedSlots) // hàng cũ sắp bị thay - bỏ khe viền cũ
+        utilityLedSlots.clear()
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
@@ -647,7 +709,9 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
                 setStrokeLive(0, Color.TRANSPARENT)
             }
             background = keyBackground
-            ledKeySlots.add(LedKeySlot(keyBackground, normX, 0f)) // hàng trên cùng -> normY = 0
+            val utilitySlot = LedKeySlot(keyBackground, normX, 0f) // hàng trên cùng -> normY = 0
+            ledKeySlots.add(utilitySlot)
+            utilityLedSlots.add(utilitySlot)
             setOnClickListener {
                 VibrationSettings.tick(this@SmartKeyboardService)
                 onClick()
@@ -694,10 +758,12 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     )
 
     private fun rebuildKeyRows() {
+        builtPage = currentPage
         cachedHasBackgroundImage = ThemeSettings.hasBackgroundImage(this)
         rowsHost.removeAllViews()
         letterKeyViews.clear()
         ledKeySlots.clear() // phím cũ đã bị gỡ khỏi cây view - bỏ hết khe viền cũ, tránh vẽ vào phím đã mất
+        ledKeySlots.addAll(utilityLedSlots) // hàng tiện ích vẫn còn trên màn hình - giữ lại khe viền của nó
         // View phím cũ (nếu có) sắp bị gỡ hết khỏi cây - reset cache + trạng thái đã áp dụng để
         // lần refreshLetterCaseDisplay() kế tiếp BẮT BUỘC vẽ lại đầy đủ 1 lần (view mới toanh,
         // chưa có chữ hoa/thường đúng) thay vì tưởng "không đổi gì" rồi bỏ qua nhầm.
