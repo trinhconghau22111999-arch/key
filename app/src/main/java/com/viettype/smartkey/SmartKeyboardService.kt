@@ -207,6 +207,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: androidx.camera.core.Camera? = null
     private var torchOn = false
+    // Đèn đang bật lúc bàn phím ẩn -> bật lại khi bàn phím hiện lại (camera tự mở lại).
+    private var torchRestorePending = false
     private var torchButtonView: TextView? = null
     // [Mục 1] Luồng nền riêng để phân tích khung hình (trước đây chạy ngay trên luồng chính).
     private var scanExecutor: ExecutorService? = null
@@ -296,6 +298,8 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+        // Đến hạn tự xoá lịch sử quét (nếu người dùng đã bật trong Cài đặt) thì xoá luôn.
+        ScanHistoryStore.autoClearIfDue(this)
         // [Mục 19] Nhận diện "cùng 1 ô nhập, chỉ bị khởi động lại" (restarting) - lúc này KHÔNG được
         // reset hoa/thường + trang phím, nếu không đang gõ giữa câu cũng bị tự viết hoa ngẫu nhiên.
         val sessionKey = editorSessionKey(info)
@@ -494,13 +498,11 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             lifecycleRegistry.currentState = Lifecycle.State.CREATED
         }
         // Dong camera thi den flash cung tat theo - dua nut den ve dung trang thai tat.
+        // Nhớ là đèn đang bật để bật lại khi bàn phím hiện lại (xem onWindowShown()).
         if (scanOverlay != null && torchOn) {
+            torchRestorePending = true
             torchOn = false
-            torchButtonView?.text = "🔦"
-            torchButtonView?.background = GradientDrawable().apply {
-                cornerRadius = dp(6).toFloat()
-                setColor(Color.parseColor("#88000000"))
-            }
+            applyTorchButtonUi()
         }
     }
 
@@ -510,6 +512,41 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
         super.onWindowShown()
         if (lifecycleRegistry.currentState != Lifecycle.State.DESTROYED) {
             lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+        }
+        if (torchRestorePending && scanOverlay != null) restoreTorchAfterShow(0)
+    }
+
+    /** Bật lại đèn flash sau khi camera mở lại. Camera cần chút thời gian để mở nên enableTorch()
+     *  có thể bị từ chối ở lần đầu -> thử lại vài lần, mỗi lần cách ~300ms. Nếu bàn phím lại ẩn
+     *  giữa chừng thì dừng (cờ torchRestorePending vẫn giữ để lần hiện sau bật tiếp). */
+    private fun restoreTorchAfterShow(attempt: Int) {
+        if (!torchRestorePending || scanOverlay == null) { torchRestorePending = false; return }
+        if (lifecycleRegistry.currentState != Lifecycle.State.RESUMED) return
+        val cam = camera
+        if (cam == null || attempt > 10) { torchRestorePending = false; return }
+        val future = try { cam.cameraControl.enableTorch(true) } catch (e: Exception) { null }
+        if (future == null) {
+            mainHandler.postDelayed({ restoreTorchAfterShow(attempt + 1) }, 300)
+            return
+        }
+        future.addListener({
+            val ok = try { future.get(); true } catch (e: Exception) { false }
+            if (!torchRestorePending || scanOverlay == null) return@addListener
+            if (ok) {
+                torchRestorePending = false
+                torchOn = true
+                applyTorchButtonUi()
+            } else {
+                mainHandler.postDelayed({ restoreTorchAfterShow(attempt + 1) }, 300)
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun applyTorchButtonUi() {
+        torchButtonView?.text = if (torchOn) "💡" else "🔦"
+        torchButtonView?.background = GradientDrawable().apply {
+            cornerRadius = dp(6).toFloat()
+            setColor(if (torchOn) ThemeSettings.getAccentColor(this@SmartKeyboardService) else Color.parseColor("#88000000"))
         }
     }
 
@@ -1623,13 +1660,10 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             showToast("Thiết bị không có đèn flash.")
             return
         }
+        torchRestorePending = false // người dùng tự bấm đèn -> bỏ yêu cầu bật lại tự động đang chờ
         torchOn = !torchOn
         cam.cameraControl.enableTorch(torchOn)
-        torchButtonView?.text = if (torchOn) "💡" else "🔦"
-        torchButtonView?.background = GradientDrawable().apply {
-            cornerRadius = dp(6).toFloat()
-            setColor(if (torchOn) ThemeSettings.getAccentColor(this@SmartKeyboardService) else Color.parseColor("#88000000"))
-        }
+        applyTorchButtonUi()
     }
 
     @androidx.camera.core.ExperimentalGetImage
@@ -1742,6 +1776,7 @@ class SmartKeyboardService : InputMethodService(), LifecycleOwner {
             }
         }
         torchOn = false
+        torchRestorePending = false // bấm Huỷ -> không bật lại đèn nữa
         torchButtonView = null
         camera = null
         scanOverlay?.let { rootContainer.removeView(it) }

@@ -824,7 +824,22 @@ class SettingsActivity : AppCompatActivity() {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val entries = ScanHistoryStore.getEntries(this)
 
-        box.addView(bodyText("${entries.size} mục đã lưu."))
+        box.addView(bodyText("${entries.size} mục đã lưu (không giới hạn số lượng mỗi ngày)."))
+
+        box.addView(bodyText("Tự động xoá toàn bộ lịch sử:"))
+        val autoClearRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val currentAutoClear = ScanHistoryStore.getAutoClearDays(this)
+        listOf(
+            "Tắt" to ScanHistoryStore.AUTO_CLEAR_OFF,
+            "Mỗi ngày" to ScanHistoryStore.AUTO_CLEAR_EVERY_DAY,
+            "2 ngày 1 lần" to ScanHistoryStore.AUTO_CLEAR_EVERY_2_DAYS,
+        ).forEach { (label, days) ->
+            autoClearRow.addView(chip(label, currentAutoClear == days) {
+                ScanHistoryStore.setAutoClearDays(this, days)
+                rebuildAll()
+            })
+        }
+        box.addView(autoClearRow)
 
         val actionsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actionsRow.addView(actionButton("Xuất Excel & chia sẻ") { exportAndShareHistory() })
