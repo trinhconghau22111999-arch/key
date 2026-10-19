@@ -1149,6 +1149,17 @@ class SmartKeyboardService : InputMethodService() {
 
     private fun handleLetterOrSymbolKey(rawChar: Char) {
         val ic = currentInputConnection ?: return
+        // Gom mọi lệnh gửi sang ô nhập của 1 lần gõ (xoá + chèn) thành 1 lô để giảm số lần
+        // gọi IPC đồng bộ - mỗi lệnh là 1 lần chờ app đích xử lý, app chậm thì bàn phím khựng.
+        ic.beginBatchEdit()
+        try {
+            handleLetterOrSymbolKeyInternal(ic, rawChar)
+        } finally {
+            ic.endBatchEdit()
+        }
+    }
+
+    private fun handleLetterOrSymbolKeyInternal(ic: android.view.inputmethod.InputConnection, rawChar: Char) {
         markSelfEdit()
         val locale = LocaleSettings.getCurrentLocale(this)
         // Trang 3 (ký hiệu toán học/Hy Lạp) không áp dụng hoa/thường - π, Δ... phải gõ ra
@@ -1218,6 +1229,15 @@ class SmartKeyboardService : InputMethodService() {
 
     private fun handleBackspace() {
         val ic = currentInputConnection ?: return
+        ic.beginBatchEdit()
+        try {
+            handleBackspaceInternal(ic)
+        } finally {
+            ic.endBatchEdit()
+        }
+    }
+
+    private fun handleBackspaceInternal(ic: android.view.inputmethod.InputConnection) {
         // Nếu đang có VÙNG CHỌN (bôi đen 1 khối chữ): deleteSurroundingText(1, 0) KHÔNG đụng
         // tới phần đang chọn (theo đúng tài liệu InputConnection - nó chỉ xoá ký tự nằm TRƯỚC
         // vùng chọn, còn khối đang bôi đen giữ nguyên) -> trước đây gây cảm giác "quét khối
@@ -1345,10 +1365,14 @@ class SmartKeyboardService : InputMethodService() {
         }
     }
 
+    /** Thời điểm chạm phím gần nhất - khi đang gõ, hiệu ứng LED tạm nhường luồng chính cho việc nhận phím. */
+    private var lastKeyDownAt = 0L
+
     /** Gọi mỗi khi người dùng chạm BẤT KỲ phím nào - nếu hiệu ứng LED đang tạm dừng do idle
      *  thì chạy tiếp ngay (resume() tiếp tục đúng từ pha đang dở dang, không giật/nhảy màu),
      *  đồng thời luôn hẹn giờ lại đồng hồ đếm 10 giây từ đầu. */
     private fun notifyLedActivity() {
+        lastKeyDownAt = SystemClock.uptimeMillis()
         if (ledPausedForIdle) {
             ledAnimator?.resume()
             ledPausedForIdle = false
@@ -1382,6 +1406,9 @@ class SmartKeyboardService : InputMethodService() {
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener { animator ->
+                // Đang gõ (vừa chạm phím trong 120ms) thì bỏ qua khung LED này: ValueAnimator vẫn
+                // giữ đúng thời gian nên khi ngừng gõ hiệu ứng chạy tiếp đúng pha, không bị lệch.
+                if (SystemClock.uptimeMillis() - lastKeyDownAt < 120L) return@addUpdateListener
                 // TOI UU: gioi han toi da ~30 khung hinh/giay cho hieu ung
                 // trang tri nay (thay vi mac dinh ~60fps cua ValueAnimator) -
                 // mat nguoi hau nhu KHONG phan biet duoc su khac biet o 1
