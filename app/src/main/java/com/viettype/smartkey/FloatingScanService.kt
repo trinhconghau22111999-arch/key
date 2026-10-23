@@ -14,7 +14,6 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
-import android.os.SystemClock
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -325,10 +324,6 @@ class FloatingScanService : Service(), LifecycleOwner {
 
     // ============================== CAMERA + ĐỌC MÃ ==============================
 
-    /** Mốc thời gian (uptimeMillis) trước đó không nhận mã nào - khoảng nghỉ sau mỗi lần quét. */
-    @Volatile
-    private var pauseUntil = 0L
-
     private fun startCamera() {
         val providerFuture = ProcessCameraProvider.getInstance(this)
         providerFuture.addListener({
@@ -366,15 +361,9 @@ class FloatingScanService : Service(), LifecycleOwner {
                 imageProxy.close()
                 return
             }
-            // Đang trong khoảng nghỉ sau khi vừa nhận 1 mã: bỏ qua khung này, không đưa vào ML Kit.
-            val frameStartedAt = SystemClock.uptimeMillis()
-            if (frameStartedAt < pauseUntil) {
-                imageProxy.close()
-                return
-            }
             val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
             scanner.process(image)
-                .addOnSuccessListener { barcodes -> handleBarcodes(barcodes, frameStartedAt) }
+                .addOnSuccessListener { barcodes -> handleBarcodes(barcodes) }
                 .addOnFailureListener { /* bỏ qua 1 khung lỗi - sẽ có khung kế tiếp */ }
                 .addOnCompleteListener { imageProxy.close() }
         } catch (e: Exception) {
@@ -398,10 +387,8 @@ class FloatingScanService : Service(), LifecycleOwner {
         }
     }
 
-    private fun handleBarcodes(barcodes: List<Barcode>, frameStartedAt: Long) {
+    private fun handleBarcodes(barcodes: List<Barcode>) {
         if (stopped || overlayView == null || frameHandled.get()) return
-        // Khung bắt đầu xử lý TRƯỚC khi hết khoảng nghỉ (kết quả về trễ) -> bỏ, tránh nhận mã "cũ".
-        if (frameStartedAt < pauseUntil) return
         val content = barcodes.asSequence().mapNotNull { extractBarcodeText(it) }.firstOrNull() ?: return
         // Cờ nguyên tử: chỉ 1 kết quả được xử lý mỗi lượt, dù nhiều khung về cùng lúc.
         if (!frameHandled.compareAndSet(false, true)) return
@@ -417,7 +404,6 @@ class FloatingScanService : Service(), LifecycleOwner {
     }
 
     private fun scheduleRearm(delayMs: Long) {
-        pauseUntil = SystemClock.uptimeMillis() + delayMs
         rearmRunnable?.let { mainHandler.removeCallbacks(it) }
         val r = Runnable { frameHandled.set(false) }
         rearmRunnable = r
