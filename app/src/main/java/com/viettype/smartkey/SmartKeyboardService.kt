@@ -35,10 +35,6 @@ import android.view.inputmethod.EditorInfo
  * bàn phím chỉ nhận mã quét được qua ScanBridge rồi gõ vào ô nhập) và NHẬP LIỆU BẰNG
  * GIỌNG NÓI (dùng SpeechRecognizer trực tiếp).
  */
-/** false = KHÔNG tự viết hoa chữ đầu (đầu ô nhập / đầu câu / sau Enter). Chữ đầu tiên gõ ra là chữ
- *  thường; muốn hoa thì tự bấm Shift. Đặt true để bật lại hành vi tự viết hoa cũ. */
-private const val AUTO_CAPITALIZE_ENABLED = false
-
 class SmartKeyboardService : InputMethodService() {
 
     private enum class Page { LETTERS, SYMBOLS, SYMBOLS2, NUMPAD }
@@ -46,7 +42,8 @@ class SmartKeyboardService : InputMethodService() {
 
     private var currentPage = Page.LETTERS
     private var capsMode = CapsMode.OFF
-    private var autoCapPending = true // true = ký tự tiếp theo sẽ tự viết hoa (đầu câu/đầu ô nhập)
+    // true = ký tự tiếp theo sẽ tự viết hoa. CHỈ bật sau dấu . ! ? và sau Enter; KHÔNG bật lúc mới mở bàn phím/ô nhập.
+    private var autoCapPending = false
     private var lastShiftTapAt = 0L
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -267,7 +264,7 @@ class SmartKeyboardService : InputMethodService() {
         invalidateWordBuffer()
         currentWordEscaped = false
         if (!sameFieldRestart) {
-            autoCapPending = true
+            autoCapPending = false // mở bàn phím: chữ đầu tiên là chữ thường
             capsMode = CapsMode.OFF
         }
         // Ô nhập mã PIN/số điện thoại/số (inputType lớp CLASS_NUMBER, CLASS_PHONE,
@@ -450,11 +447,8 @@ class SmartKeyboardService : InputMethodService() {
         if (SystemClock.uptimeMillis() - lastSelfEditAt < SELF_EDIT_WINDOW_MS) return
         wordBufferDirty = true
         currentWordEscaped = false
-        // Con trỏ nhảy về đầu ô nhập (vd app vừa xoá sạch ô sau khi gửi tin) -> chữ kế tiếp viết hoa.
-        if (newSelStart == 0 && newSelEnd == 0 && !autoCapPending) {
-            autoCapPending = true
-            if (::rowsHost.isInitialized) refreshLetterCaseDisplay()
-        }
+        // Con trỏ nhảy về đầu ô nhập (vd app vừa xoá sạch ô sau khi gửi tin): KHÔNG tự viết hoa
+        // (người dùng muốn chữ đầu tiên luôn là chữ thường, trừ khi tự bấm Shift).
     }
 
     private fun markSelfEdit() {
@@ -1308,7 +1302,7 @@ class SmartKeyboardService : InputMethodService() {
     }
 
     private fun refreshLetterCaseDisplay() {
-        if (AUTO_CAPITALIZE_ENABLED && autoCapPending && capsMode == CapsMode.OFF) capsMode = CapsMode.SINGLE_SHIFT
+        if (autoCapPending && capsMode == CapsMode.OFF) capsMode = CapsMode.SINGLE_SHIFT
         val upper = capsMode != CapsMode.OFF
         val isCapsLock = capsMode == CapsMode.CAPS_LOCK
         // TOI UU: phan lon cac lan go phim KHONG lam thay doi trang thai Hoa/thuong so voi
