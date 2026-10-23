@@ -35,6 +35,10 @@ import android.view.inputmethod.EditorInfo
  * bàn phím chỉ nhận mã quét được qua ScanBridge rồi gõ vào ô nhập) và NHẬP LIỆU BẰNG
  * GIỌNG NÓI (dùng SpeechRecognizer trực tiếp).
  */
+/** false = KHÔNG tự viết hoa chữ đầu (đầu ô nhập / đầu câu / sau Enter). Chữ đầu tiên gõ ra là chữ
+ *  thường; muốn hoa thì tự bấm Shift. Đặt true để bật lại hành vi tự viết hoa cũ. */
+private const val AUTO_CAPITALIZE_ENABLED = false
+
 class SmartKeyboardService : InputMethodService() {
 
     private enum class Page { LETTERS, SYMBOLS, SYMBOLS2, NUMPAD }
@@ -1304,7 +1308,7 @@ class SmartKeyboardService : InputMethodService() {
     }
 
     private fun refreshLetterCaseDisplay() {
-        if (autoCapPending && capsMode == CapsMode.OFF) capsMode = CapsMode.SINGLE_SHIFT
+        if (AUTO_CAPITALIZE_ENABLED && autoCapPending && capsMode == CapsMode.OFF) capsMode = CapsMode.SINGLE_SHIFT
         val upper = capsMode != CapsMode.OFF
         val isCapsLock = capsMode == CapsMode.CAPS_LOCK
         // TOI UU: phan lon cac lan go phim KHONG lam thay doi trang thai Hoa/thuong so voi

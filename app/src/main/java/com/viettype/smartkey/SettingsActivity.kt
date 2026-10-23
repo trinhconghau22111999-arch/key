@@ -1,6 +1,9 @@
 package com.viettype.smartkey
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -22,7 +25,10 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.File
 
@@ -36,6 +42,7 @@ class SettingsActivity : AppCompatActivity() {
     companion object {
         private const val REQUEST_PICK_BACKGROUND_IMAGE = 701
         private const val REQUEST_CROP_BACKGROUND_IMAGE = 702
+        private const val REQUEST_STARTUP_PERMISSIONS = 703
     }
 
     private lateinit var contentBox: LinearLayout
@@ -62,6 +69,62 @@ class SettingsActivity : AppCompatActivity() {
         setContentView(scroll)
 
         rebuildAll()
+
+        // Mở app lần đầu (không phải xoay màn hình/tạo lại): hiện luôn các khung xin quyền ngay tại đây.
+        if (savedInstanceState == null) requestStartupPermissions()
+    }
+
+    /** Bước 1: hộp thoại hệ thống xin Camera + Micro + Thông báo (hiện ngay trong app, bấm Cho phép
+     *  là xong). Bước 2 (sau khi trả lời xong bước 1): hộp thoại giải thích rồi mở thẳng trang
+     *  "Hiển thị trên các ứng dụng khác" của app. */
+    private fun requestStartupPermissions() {
+        val needed = mutableListOf<String>()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.CAMERA)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.RECORD_AUDIO)
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (needed.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, needed.toTypedArray(), REQUEST_STARTUP_PERMISSIONS)
+        } else {
+            promptOverlayPermissionIfNeeded()
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_STARTUP_PERMISSIONS) promptOverlayPermissionIfNeeded()
+    }
+
+    /** Android KHÔNG cho hiện hộp thoại "Cho phép" ngay trong app với quyền "Hiển thị trên các ứng dụng
+     *  khác" - bắt buộc người dùng gạt công tắc ở trang hệ thống. Nên hiện hộp thoại giải thích rồi mở
+     *  THẲNG đúng trang của app này (chỉ cần gạt 1 công tắc, không phải tự tìm trong danh sách). */
+    private fun promptOverlayPermissionIfNeeded() {
+        if (isFinishing || isDestroyed) return
+        if (FloatingScanService.canDrawOverlays(this)) return
+        AlertDialog.Builder(this)
+            .setTitle("Cấp quyền hiển thị trên ứng dụng khác")
+            .setMessage(
+                "Khung quét QR nổi cần quyền \"Hiển thị trên các ứng dụng khác\".\n\n" +
+                    "Bấm \"Cấp quyền\" rồi gạt công tắc BẬT cho QR Keyboard gaming 2, sau đó bấm Back để quay lại."
+            )
+            .setCancelable(false)
+            .setPositiveButton("Cấp quyền") { _, _ ->
+                try {
+                    startActivity(
+                        Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Không mở được trang cấp quyền: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Để sau", null)
+            .show()
     }
 
     override fun onResume() {
