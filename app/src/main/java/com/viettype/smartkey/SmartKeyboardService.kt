@@ -55,7 +55,7 @@ class SmartKeyboardService : InputMethodService() {
         /** [Mục 17] Độ dài tối đa của bộ đệm từ đang gõ (giữ đúng mức 30 ký tự như cách đọc cũ). */
         const val WORD_BUFFER_MAX = 30
         /** [Mục 3] Thời gian "nghỉ" sau khi xuất mã / sau khi bỏ qua mã bị chặn, trước khi nhận khung mới. */
-        const val SCAN_REARM_DELIVERED_MS = 1500L
+        const val SCAN_REARM_DELIVERED_MS = 300L
         const val SCAN_REARM_IGNORED_MS = 1000L
     }
 
