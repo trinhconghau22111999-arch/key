@@ -10,6 +10,7 @@ import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
@@ -614,7 +615,7 @@ class SmartKeyboardService : InputMethodService() {
             gravity = Gravity.CENTER
             setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
             textSize = 14f * keyTextSizeScale()
-            layoutParams = LinearLayout.LayoutParams(0, dp(utilityRowHeightDp()), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) }
+            layoutParams = LinearLayout.LayoutParams(0, dp(utilityRowHeightDp()), 1f) // khe 3dp nằm trong InsetDrawable bên dưới, không dùng margin
             val keyBackground = LedKeyDrawable(dp(6).toFloat(), if (cachedHasBackgroundImage) Color.TRANSPARENT else ThemeSettings.utilityButtonBackgroundColor(this@SmartKeyboardService)).apply {
                 // SỬA LỖI (người dùng phản ánh: "4 phím phía trên không có viền"): 4 phím ở hàng
                 // tiện ích (🌐/QR/🎤/123) trước đây KHÔNG hề được thêm vào ledKeySlots - chỉ các
@@ -624,7 +625,7 @@ class SmartKeyboardService : InputMethodService() {
                 // - hiệu ứng chạy (hoặc màu tĩnh) sẽ tự áp dụng luôn cho cả hàng này.
                 setStrokeLive(0, Color.TRANSPARENT)
             }
-            background = keyBackground
+            background = InsetDrawable(keyBackground, dp(3), 0, dp(3), 0)
             val utilitySlot = LedKeySlot(keyBackground, normX, 0f) // hàng trên cùng -> normY = 0
             ledKeySlots.add(utilitySlot)
             utilityLedSlots.add(utilitySlot)
@@ -781,9 +782,8 @@ class SmartKeyboardService : InputMethodService() {
      *  height=MATCH_PARENT) - phím nào cần XẾP DỌC (như cột Xoá/ABC/Enter ở trang số) phải đổi
      *  lại thành width=MATCH_PARENT, height=0 co giãn thì mới cao đúng tỉ lệ mong muốn. */
     private fun asVerticalWeighted(view: View, weight: Float): View {
-        view.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, weight).also {
-            it.setMargins(dp(2), dp(2), dp(2), dp(2))
-        }
+        // Không dùng margin nữa: khe hở 2dp đã nằm trong InsetDrawable của nền phím (xem buildKey()).
+        view.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, weight)
         return view
     }
 
@@ -814,9 +814,11 @@ class SmartKeyboardService : InputMethodService() {
                 else -> 13f
             }
             setTextColor(ThemeSettings.keyTextColor(this@SmartKeyboardService))
+            // Khe hở giữa các phím KHÔNG còn là margin (margin = vùng chết, chạm vào không phím nào
+            // nhận). Giờ các view phím xếp khít nhau, khe hở chỉ là phần inset của hình nền - nên
+            // chạm vào khe nào cũng rơi vào view của phím gần nhất và phím đó ăn.
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight)
-                .also { it.setMargins(dp(2), dp(2), dp(2), dp(2)) }
-            background = keyBackground
+            background = InsetDrawable(keyBackground, dp(2))
         }
 
         if (code.length == 1 && code[0].isLetter() && currentPage != Page.SYMBOLS2 && code != "đ") {
